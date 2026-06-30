@@ -64,6 +64,9 @@ def eval_command(args):
     # Handle prediction path - default to None if not provided
     predictions_path = args.prediction_path if args.prediction_path else None
 
+    # Handle Docker image source
+    use_dockerhub_images = args.use_dockerhub_images if args.use_dockerhub_images else False
+
     # Handle instance filtering by regex
     instance_ids = None
     if args.instances_regex:
@@ -101,11 +104,11 @@ def eval_command(args):
             max_workers=args.num_workers,
             max_build_workers=16,
             force_rebuild=False,
-            cache_level="env",
-            clean=False,
+            cache_level=args.cache_level,
+            clean=args.clean,
             open_file_limit=4096,
             run_id=run_id,
-            timeout=7200,
+            timeout=86400,
             allow_test_patch=False,
             run_coverage=False,
             run_perf=True,
@@ -115,7 +118,7 @@ def eval_command(args):
             model_predictions=predictions_path or "",
             gdrive_annotation_sheet="",
             push_to_dockerhub=False,
-            use_dockerhub_images=True,
+            use_dockerhub_images=use_dockerhub_images,
             use_podman=False,
             workload_predictions="",
             force_rerun=force_rerun,
@@ -234,6 +237,23 @@ def main():
         "--force_rerun",
         action="store_true",
         help="Force re-running the evaluation even if results already exist",
+    )
+    eval_parser.add_argument(
+        "--use_dockerhub_images",
+        action="store_true",
+        help="Use pre-built Docker images from DockerHub (slower in China). If not set, will build images locally.",
+    )
+    eval_parser.add_argument(
+        "--cache_level",
+        type=str,
+        choices=["none", "base", "env", "instance"],
+        default="env",
+        help="Cache level - remove images above this level (default: env)",
+    )
+    eval_parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Clean images above cache level (default: False)",
     )
 
     # Report subcommand

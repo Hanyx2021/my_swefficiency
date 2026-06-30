@@ -922,7 +922,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     if args.nano_cpus:
         resource_limits["nano_cpus"] = args.nano_cpus
 
-    docker_client = docker.from_env()
+    docker_client = docker.from_env(timeout=3600)
 
     remove_container = not args.keep_containers
     remove_image = not args.keep_images

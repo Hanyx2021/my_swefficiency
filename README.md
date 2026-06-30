@@ -78,6 +78,7 @@ sudo scripts/vm/setup_docker.sh MEM_MAX MEM_HIGH
 
 ```bash
 swefficiency eval --run_id my_eval --num_workers 12
+swefficiency eval --run_id my_eval --num_workers 12 --dataset /home/hyx/swe_data/data
 ```
 
 This runs the expert (human) patches to establish baseline performance metrics. Results are stored in `logs/run_evaluation/my_eval/gold/`.

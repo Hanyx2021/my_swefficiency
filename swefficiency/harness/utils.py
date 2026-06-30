@@ -21,8 +21,9 @@ from pathlib import Path
 from typing import cast
 
 import requests
-from datasets import Dataset, load_dataset
+from datasets import Dataset
 from dotenv import load_dotenv
+import pyarrow.parquet as pq
 
 from swefficiency.harness.constants import (
     KEY_INSTANCE_ID,
@@ -40,8 +41,10 @@ def load_swefficiency_dataset(
     name="swefficiency/swefficiency", split="test", instance_ids=None, revision=None
 ) -> list[SWEfficiencyInstance]:
     """
-    Load SWE-bench dataset from Hugging Face Datasets or local .json/.jsonl file
+    Load SWE-bench dataset from Hugging Face Datasets or local .json/.jsonl file or local directory
     """
+    from datasets import load_dataset
+    
     # check that all instance IDs are in the dataset
     if instance_ids:
         instance_ids = set(instance_ids)
@@ -54,6 +57,21 @@ def load_swefficiency_dataset(
             json.loads(instance) for instance in Path(name).read_text().splitlines()
         ]
         dataset_ids = {instance[KEY_INSTANCE_ID] for instance in dataset}
+    elif Path(name).is_dir():
+        # Check if this is a directory with parquet files
+        parquet_files = sorted(Path(name).glob("*.parquet"))
+        if parquet_files:
+            # Load from local parquet files directly using pyarrow
+            all_data = []
+            for parquet_file in parquet_files:
+                table = pq.read_table(parquet_file)
+                all_data.extend(table.to_pylist())
+            dataset = all_data
+            dataset_ids = {instance[KEY_INSTANCE_ID] for instance in dataset}
+        else:
+            # Load from local directory (Hugging Face cache format)
+            dataset = cast(Dataset, load_dataset(name, split=split, revision=revision))
+            dataset_ids = {instance[KEY_INSTANCE_ID] for instance in dataset}
     else:
         # Load from Hugging Face Datasets
         if name.lower() in {"swefficiency"}:
@@ -198,28 +216,113 @@ def has_attribute_or_import_error(log_before):
     return False
 
 
+ENV_YML_CACHE_DIR = Path("/home/hyx/swefficiency/cache/environment_yml")
+
+
 @cache
 def get_environment_yml_by_commit(repo: str, commit: str, env_name: str) -> str:
+    ENV_YML_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Try disk cache first for each possible path
     for req_path in MAP_REPO_TO_ENV_YML_PATHS[repo]:
-        reqs_url = os.path.join(SWE_BENCH_URL_RAW, repo, commit, req_path)
-        reqs = requests.get(reqs_url)
-        if reqs.status_code == 200:
+        cache_key = f"{repo.replace('/', '_')}_{commit}_{req_path.replace('/', '_')}"
+        cache_file = ENV_YML_CACHE_DIR / cache_key
+        if cache_file.exists():
+            # print(f"[ENV CACHE] Using cached {req_path} for {repo}@{commit}")
+            reqs_text = cache_file.read_text(encoding="utf-8")
             break
     else:
-        raise ValueError(
-            f"Could not find environment.yml at paths {MAP_REPO_TO_ENV_YML_PATHS[repo]} for repo {repo} at commit {commit}"
+        # Cache miss: fetch from network
+        session = requests.Session()
+        retry = requests.adapters.Retry(
+            total=3,
+            backoff_factor=2,
+            status_forcelist=[500, 502, 503, 504, 408, 429]
         )
+        adapter = requests.adapters.HTTPAdapter(max_retries=retry)
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
 
-    lines = reqs.text.split("\n")
-    cleaned = []
-    for line in lines:
-        # Rename environment to given name
-        if line.startswith("name:"):
-            cleaned.append(f"name: {env_name}")
-            continue
-        cleaned.append(line)
+        reqs_text = None
+        for req_path in MAP_REPO_TO_ENV_YML_PATHS[repo]:
+            reqs_url = os.path.join(SWE_BENCH_URL_RAW, repo, commit, req_path)
+            try:
+                reqs = session.get(reqs_url, timeout=60)
+                if reqs.status_code == 200:
+                    reqs_text = reqs.text
+                    # Save to disk cache
+                    cache_key = f"{repo.replace('/', '_')}_{commit}_{req_path.replace('/', '_')}"
+                    cache_file = ENV_YML_CACHE_DIR / cache_key
+                    cache_file.write_text(reqs_text, encoding="utf-8")
+                    print(f"[ENV CACHE] Saved {req_path} for {repo}@{commit} to disk cache")
+                    break
+            except Exception as e:
+                print(f"[ENV CACHE] Failed to fetch {reqs_url}: {e}")
+                continue
 
-    return "\n".join(cleaned)
+        if reqs_text is None:
+            raise ValueError(
+                f"Could not find environment.yml at paths {MAP_REPO_TO_ENV_YML_PATHS[repo]} for repo {repo} at commit {commit}"
+            )
+
+    # Parse YAML using ruamel.yaml for proper structure manipulation
+    from ruamel.yaml import YAML
+    yaml = YAML()
+    yaml.preserve_quotes = True
+    yaml.indent(mapping=2, sequence=4, offset=2)
+    
+    env_data = yaml.load(reqs_text)
+    env_data["name"] = env_name
+    
+    # Process dependencies to handle pip extras syntax
+    if "dependencies" in env_data:
+        pip_deps_with_extras = []
+        new_dependencies = []
+        
+        for dep in env_data["dependencies"]:
+            if isinstance(dep, str):
+                # Check for pip extras syntax: package[extra]
+                if "[" in dep and "]" in dep:
+                    import re
+                    match = re.match(r'^([^\[]+)\[([^\]]+)\]([=<>!~]+[^\s]*)?', dep)
+                    if match:
+                        package = match.group(1)
+                        extras = match.group(2)
+                        version_spec = match.group(3) if match.group(3) else ""
+                        # Keep original syntax for pip: section
+                        pip_deps_with_extras.append(f"{package}[{extras}]{version_spec}")
+                        continue
+            new_dependencies.append(dep)
+        
+        # If we have pip dependencies with extras, add them to pip: section
+        if pip_deps_with_extras:
+            # Check if pip: section already exists
+            pip_section = None
+            for i, dep in enumerate(new_dependencies):
+                if isinstance(dep, dict) and "pip" in dep:
+                    pip_section = dep
+                    break
+            
+            if pip_section:
+                # Add to existing pip: section
+                for pip_dep in pip_deps_with_extras:
+                    if pip_dep not in pip_section["pip"]:
+                        pip_section["pip"].append(pip_dep)
+            else:
+                # Create new pip: section
+                # Ensure pip is in dependencies
+                if "pip" not in new_dependencies:
+                    new_dependencies.insert(0, "pip")
+                # Add pip: section
+                new_dependencies.append({"pip": pip_deps_with_extras})
+        
+        env_data["dependencies"] = new_dependencies
+    
+    # Convert back to string
+    from io import StringIO
+    string_stream = StringIO()
+    yaml.dump(env_data, string_stream)
+    return string_stream.getvalue()
 
 
 def get_environment_yml(instance: SWEfficiencyInstance, env_name: str) -> str:
@@ -247,9 +350,20 @@ def get_environment_yml(instance: SWEfficiencyInstance, env_name: str) -> str:
 
 @cache
 def get_requirements_by_commit(repo: str, commit: str) -> str:
+    # Configure retry session for network stability
+    session = requests.Session()
+    retry = requests.adapters.Retry(
+        total=10,
+        backoff_factor=2,
+        status_forcelist=[500, 502, 503, 504, 408, 429]
+    )
+    adapter = requests.adapters.HTTPAdapter(max_retries=retry)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    
     for req_path in MAP_REPO_TO_REQS_PATHS[repo]:
         reqs_url = os.path.join(SWE_BENCH_URL_RAW, repo, commit, req_path)
-        reqs = requests.get(reqs_url)
+        reqs = session.get(reqs_url, timeout=300)  # Increased to 120 seconds
         if reqs.status_code == 200:
             break
     else:

@@ -24,7 +24,7 @@ import docker
 import docker.errors
 from tqdm import tqdm
 
-USE_HOST_NETWORK = False
+USE_HOST_NETWORK = True
 
 from swefficiency.harness.constants import (
     ANNOTATE_IMAGE_BUILD_DIR,
@@ -171,9 +171,9 @@ def build_image(
                     decode=True,
                     platform=platform,
                     nocache=nocache,
-                    # network_mode="host" if USE_HOST_NETWORK else None,
+                    network_mode="host" if USE_HOST_NETWORK else None,
                     # container_limits={"memory": 32 * 1024 * 1024 * 1024},
-                    timeout=build_timeout,  # TODO: Verify this timeout.
+                    timeout=build_timeout or 3600,  # Increased to 1 hour for complex conda environments
                 )
 
                 # Log the build process continuously
@@ -348,7 +348,7 @@ def build_env_images(
     client: docker.DockerClient,
     dataset: list,
     force_rebuild: bool = False,
-    max_workers: int = 4,
+    max_workers: int = 2,  # Reduced from 3 to avoid UnixHTTPConnectionPool errors
     batch_size: int = 1,
 ):
     """
@@ -419,17 +419,25 @@ def build_env_images(
                         traceback.print_exc()
                         failed.append(futures[future])
                         continue
-                    except Exception:
-                        print("Error building image")
+                    except Exception as e:
+                        print(f"Unexpected error building image: {e}")
                         traceback.print_exc()
                         failed.append(futures[future])
                         continue
 
-                # # After each batch parallel completes, run docker system prune to free up space.
-                # print("Pruning batched images to free up space...")
-                # client.api.prune_containers()
-                # client.api.prune_images()
-                # client.api.prune_volumes()
+                # Add delay between batches to reduce Docker daemon load
+                import time
+                time.sleep(2)
+
+                # # After each batch parallel completes, run docker system prune to free up space
+                # # Only prune dangling images and stopped containers to avoid deleting useful resources
+                # # DISABLED: Prune operation may be causing hangs
+                # try:
+                #     print("Pruning dangling images and stopped containers to free up space...")
+                #     client.containers.prune()
+                #     client.images.prune(filters={'dangling': True})
+                # except Exception as e:
+                #     print(f"Warning: Failed to prune Docker resources: {e}")
 
     # Show how many images failed to build
     if len(failed) == 0:
@@ -578,13 +586,16 @@ def build_instance_image(
     except docker.errors.ImageNotFound:
         pass
 
+    # # Prepare setup scripts with potential fixes for pandas build issues
+    setup_scripts = {
+        "setup_repo.sh": test_spec.install_repo_script,
+    }
+    
     # Build the instance image
     if not image_exists:
         build_image(
             image_name=image_name,
-            setup_scripts={
-                "setup_repo.sh": test_spec.install_repo_script,
-            },
+            setup_scripts=setup_scripts,
             dockerfile=dockerfile,
             platform=test_spec.platform,
             client=client,

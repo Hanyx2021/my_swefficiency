@@ -113,7 +113,7 @@ SPECS = {
     "packages": "numpy scipy pytest" or "environment.yml" or "requirements.txt"
 
     # installation command
-    "install": "pip install -v --no-use-pep517 --no-build-isolation -e .",
+    "install": "pip install -v --no-build-isolation -e .",
 
     # prefix for running the test command
     "test_cmd": "pytest -n0 -rA"
@@ -166,11 +166,25 @@ SPECS_SKLEARN.update(
         k: {
             "python": "3.6",
             "packages": "numpy scipy 'cython<0.28' 'pytest<7.0' pandas matplotlib pyamg matplotlib",
-            "install": "pip install --no-use-pep517 --no-build-isolation -e .",
+            "install": (
+                "cd /testbed\n"
+                "rm -rf build/ dist/ *.egg-info/\n"
+                "env -u PIP_NO_CACHE_DIR python -m pip install --no-cache-dir 'cython==0.28.5' --force-reinstall\n"
+                "python -c \""
+                "import pathlib\n"
+                "p = pathlib.Path('sklearn/metrics/cluster/setup.py')\n"
+                "t = p.read_text()\n"
+                "t2 = t.replace('Configuration(\\\"metrics/cluster\\\"', 'Configuration(\\\"cluster\\\"')\n"
+                "p.write_text(t2)\n"
+                "print('patched:', t != t2)\n"
+                "\"\n"
+                "python setup.py build_ext --inplace\n"
+                "python setup.py develop"
+            ),
             "pip_packages": [
-                "'cython<0.28'",
-                "'numpy==1.17.3'",
-                "setuptools",
+                "numpy==1.19.5",
+                "cython==0.29.36",
+                "setuptools==59.5.0",
                 "scipy==1.5.2",
             ],
             "test_cmd": TEST_PYTEST,
@@ -184,7 +198,7 @@ SPECS_SKLEARN.update(
         k: {
             "python": "3.6",
             "packages": "numpy scipy 'cython==0.28.5' 'pytest<7.0' pandas matplotlib pyamg matplotlib",
-            "install": "pip install --no-use-pep517 --no-build-isolation -e .",
+            "install": "pip install numpy==1.19.5 cython==0.29.36 setuptools==59.5.0\n\nrm -rf build/ dist/ *.egg-info/\n\npython setup.py build_ext --inplace\n\npython setup.py develop",
             "pip_packages": [
                 "'cython==0.28.5'",
                 "'numpy==1.17.3'",
@@ -202,7 +216,12 @@ SPECS_SKLEARN.update(
         k: {
             "python": "3.6",
             "packages": "numpy scipy 'cython<3' 'pytest<7.0' pandas matplotlib pyamg matplotlib",
-            "install": "pip install --no-use-pep517 --no-build-isolation -e .",
+            "install": (
+                "pip install numpy==1.19.5 cython==0.29.36 setuptools==59.5.0\n\n"
+                "rm -rf build/ dist/ *.egg-info/\n\n"
+                "python setup.py build_ext --inplace\n\n"
+                "pip install --no-build-isolation .\n\n"
+            ),
             "pip_packages": [
                 "'cython<3'",
                 "numpy==1.19.2",
@@ -220,7 +239,7 @@ SPECS_SKLEARN.update(
         k: {
             "python": "3.9",
             "packages": "'numpy==1.19.5' 'scipy==1.6.0' 'cython<3' 'pytest<7.0' 'pandas<2.0.0' 'matplotlib<3.9.0' 'setuptools<61' pytest joblib threadpoolctl pyamg matplotlib",
-            "install": "pip install --no-use-pep517 --no-build-isolation -e .",
+            "install": "pip install numpy==1.23.5 cython==0.29.36 setuptools==59.5.0\n\nrm -rf build/ dist/ *.egg-info/\n\npython setup.py build_ext --inplace\n\npython setup.py develop",
             "pip_packages": ["'cython<3'", "'setuptools<61'", "numpy", "scipy"],
             "test_cmd": TEST_PYTEST,
         }
@@ -233,7 +252,12 @@ SPECS_SKLEARN.update(
         k: {
             "python": "3.9",
             "packages": "'numpy==1.19.5' 'scipy==1.6.0' 'cython<3' 'pytest<7.0' 'pandas<2.0.0' 'matplotlib<3.9.0' 'setuptools<65' pytest joblib threadpoolctl pyamg matplotlib",
-            "install": "pip install --no-use-pep517 --no-build-isolation -e .",
+            "install": (
+                "pip install numpy==1.23.5 cython==0.29.36 setuptools==59.5.0\n\n"
+                "rm -rf build/ dist/ *.egg-info/\n\n"
+                "python setup.py build_ext --inplace\n\n"
+                "python setup.py develop\n\n"
+            ),
             "pip_packages": ["'cython<3'", "'setuptools<65'", "numpy", "scipy"],
             "test_cmd": TEST_PYTEST,
         }
@@ -246,7 +270,7 @@ SPECS_SKLEARN.update(
         k: {
             "python": "3.9",
             "packages": "'numpy==1.19.5' 'scipy==1.6.0' 'cython<3' pytest 'pandas<2.0.0' 'matplotlib<3.9.0' 'setuptools<65' pytest 'joblib>=1.2.0' 'threadpoolctl>=3.1.0' pyamg matplotlib",
-            "install": "pip install --no-use-pep517 --no-build-isolation -e .",
+            "install": "pip install numpy==1.23.5 cython==0.29.36 setuptools==59.5.0\n\nrm -rf build/ dist/ *.egg-info/\n\npython setup.py build_ext --inplace\n\npython setup.py develop",
             "pip_packages": ["cython", "setuptools", "numpy", "scipy"],
             "test_cmd": TEST_PYTEST,
         }
@@ -260,7 +284,7 @@ SPECS_SKLEARN.update(
         k: {
             "python": "3.9",
             "packages": "'numpy==1.19.5' 'scipy==1.6.0' 'cython' pytest 'pandas<2.0.0' 'matplotlib<3.9.0' 'setuptools<65' pytest 'joblib>=1.2.0' 'threadpoolctl>=3.1.0' meson-python pyamg matplotlib",
-            "install": "pip install --no-build-isolation -e .",
+            "install": "pip install numpy==1.23.5 cython>=3.0 setuptools==59.5.0\n\npip install --no-build-isolation -e .",
             "pip_packages": ["cython", "setuptools", "numpy", "scipy", "meson-python"],
             "test_cmd": TEST_PYTEST,
         }
@@ -649,7 +673,7 @@ SPECS_MATPLOTLIB = {
             "fonttools==4.42.1",
             "ghostscript",
             "kiwisolver==1.4.5",
-            "numpy==1.25.2",
+            "numpy==1.26.4",
             "'packaging>=25'",
             "pillow==10.0.0",
             "pikepdf",
@@ -694,7 +718,7 @@ SPECS_MATPLOTLIB.update(
                 "fonttools==4.42.1",
                 "ghostscript",
                 "kiwisolver==1.4.5",
-                "numpy==1.25.2",
+                "numpy==1.26.4",
                 "'packaging>=25'",
                 "pillow==10.0.0",
                 "pikepdf",
@@ -1007,6 +1031,16 @@ SPECS_ASTROPY.update(
     }
 )
 
+# astropy 1.3 uses astropy_helpers as a git submodule; setup.py clones it directly
+# from github.com which is unreachable without a proxy. Pre-install astropy_helpers
+# via pip and configure git URL rewriting so the submodule clone uses the ghfast.top
+# proxy. This is done in install (not pre_install) to avoid rebuilding the env image.
+SPECS_ASTROPY["1.3"]["install"] = (
+    "git config --global url.'https://ghfast.top/https://github.com/'.insteadOf 'https://github.com/'; "
+    "pip install astropy-helpers==2.0.11; "
+    "pip install -e .[test]"
+)
+
 set_setuptools_only = 'if [ -f pyproject.toml ]; then sed -i \'s/requires = \\["setuptools",/requires = \\["setuptools==68.0.0",/\' pyproject.toml; fi; '
 set_markupsafe_version_and_setuptools = 'if [ -f pyproject.toml ]; then sed -i \'/"markupsafe[<>=]*[0-9.]*"/d; /requires = \\[/a\\            "markupsafe==2.0.1",\' pyproject.toml; sed -i \'s/requires = \\["setuptools",/requires = \\["setuptools==68.0.0",/\' pyproject.toml; fi; '
 
@@ -1128,11 +1162,14 @@ SPECS_XARRAY = {
     k: {
         "python": "3.10",
         "packages": "environment.yml",
-        "install": "pip install -e . --no-build-isolation",
+        "install": (
+            "conda install -y pandas==1.5.3 &&"
+            "pip uninstall xarray -y 2>/dev/null || true &&"
+            "python setup.py develop"
+        ),
         "pip_packages": [
             "numpy==1.24.0",
             "packaging==23.1",
-            "pandas==1.5.3",
             "pytest==7.4.0",
             "python-dateutil==2.8.2",
             "pytz==2023.3",
@@ -1505,7 +1542,7 @@ NON_TEST_EXTS = [
     ".yaml",
     ".toml",
 ]
-SWE_BENCH_URL_RAW = "https://raw.githubusercontent.com/"
+SWE_BENCH_URL_RAW = "https://ghfast.top/https://raw.githubusercontent.com/"
 USE_X86 = {
     "astropy__astropy-7973",
     "django__django-10087",
@@ -3183,7 +3220,71 @@ TEST_PANDAS_DISTRIBUTED = (
     + ' -m "not slow and not network and not db and not single_cpu" '
 )  # Pandas tests are just slow, generaly pytest-xdist is available in all.
 
-_PANDAS_CFLAGS = 'export CFLAGS="$CFLAGS -fwrapv -fno-strict-overflow -fno-strict-aliasing -Wno-error -Wno-array-bounds -Wno-deprecated-declarations -Wno-sign-compare -Wno-strict-prototypes -Wno-cpp -Wno-unused-function -Wno-missing-prototypes -Wno-implicit-function-declaration -Wno-return-type"'
+_PANDAS_CFLAGS = '-fwrapv -fno-strict-overflow -fno-strict-aliasing -Wno-error -Wno-array-bounds -Wno-deprecated-declarations -Wno-sign-compare -Wno-strict-prototypes -Wno-cpp -Wno-unused-function -Wno-missing-prototypes -Wno-implicit-function-declaration -Wno-return-type'
+
+def _pandas_install_script(
+    numpy_req: str,
+    cython_req: str,
+    setuptools_req: str,
+    install_cmd: "str | list[str]",
+    extra_requires: list = [],
+    hypothesis_req: str = "hypothesis",
+) -> str:
+    if isinstance(install_cmd, list):
+        install_cmd = "\n".join(install_cmd)
+    extra_requires_str = ", ".join(f"'{r}'" for r in extra_requires)
+    extra_constraints = "\n".join(extra_requires)
+    return f"""
+set -e
+source /opt/miniconda3/bin/activate || true
+conda activate testbed || true
+
+python -m pip install --upgrade 'pip>=20.3'
+
+export CFLAGS="${{CFLAGS//-Wno-error=use-after-free/}}"
+GCC_VERSION=$(gcc -dumpversion | cut -d. -f1)
+if [ "$GCC_VERSION" -ge 12 ]; then
+    export CFLAGS="$CFLAGS -Wno-error=use-after-free"
+fi
+export CFLAGS="$CFLAGS {_PANDAS_CFLAGS}"
+
+python -c "
+import tomli, subprocess, sys, os, re
+base_requires = ['{cython_req}', '{setuptools_req}', 'meson-python', 'ninja',
+                 '{numpy_req}', 'versioneer[toml]', 'setuptools-scm', 'packaging',
+                 'tomli', 'pkgconfig', 'wheel'{(', ' + extra_requires_str) if extra_requires_str else ''}]
+if os.path.exists('pyproject.toml'):
+    with open('pyproject.toml', 'rb') as f:
+        data = tomli.load(f)
+    build_requires = data.get('build-system', {{}}).get('requires', [])
+    if build_requires:
+        filtered = [r for r in build_requires
+                    if not re.match(r'^(numpy|cython|setuptools)\\\\b', r, re.I)
+                    and 'oldest-supported-numpy' not in r]
+        base_requires = filtered + ['{cython_req}', '{setuptools_req}', '{numpy_req}',
+                                    'wheel', 'packaging'{(', ' + extra_requires_str) if extra_requires_str else ''}]
+subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--upgrade', '--no-cache-dir'] + base_requires)
+" || exit 1
+
+python -m pip install --force-reinstall --no-cache-dir '{numpy_req}' || exit 1
+
+rm -rf build/ dist/ *.egg-info/ .mesonpy* || true
+
+python setup.py build_ext --inplace || exit 1
+
+cat > /tmp/constraints.txt << EOF
+{numpy_req}
+{cython_req}
+{setuptools_req}{chr(10) + extra_constraints if extra_constraints else ''}
+EOF
+
+{install_cmd} || exit 1
+
+python setup.py build_ext --inplace || exit 1
+
+pip install --no-cache-dir '{hypothesis_req}' pytest || true
+pip uninstall pytest-qt -y 2>/dev/null || true
+"""
 
 SPECS_PANDAS = {
     k: {
@@ -3208,11 +3309,10 @@ SPECS_PANDAS = {
             "sed -i '/pyreadstat/d' environment.yml",
         ],
         "pre_install": [
-            "git remote add upstream https://github.com/pandas-dev/pandas.git",
+            "git remote add upstream https://ghfast.top/https://github.com/pandas-dev/pandas.git",
             "git fetch upstream --tags",
+            "git fetch upstream --unshallow || true",
         ],
-        # "install": "pip install -ve . --no-build-isolation -Ceditable-verbose=true; pip uninstall pytest-qt -y; pip install hypothesis;", pip uninstall -y pandas;
-        "install": f"{_PANDAS_CFLAGS}; pip install -e . --no-build-isolation; pip uninstall pytest-qt -y;",
         "test_cmd": TEST_PANDAS,
         "distributed_test_cmd": TEST_PANDAS_DISTRIBUTED,
         "pip_packages": [
@@ -3240,26 +3340,78 @@ SPECS_PANDAS = {
 }
 # We ignore ['0.10', '0.11', '0.12', '0.13', '0.14', '0.15', '0.16', '0.17', '0.18', '0.19', '0.20', '0.21', '0.22']
 
-for k in ["1.1", "1.2", "1.3", "1.4", "1.5", "2.0", "2.1"]:
-    # numpy 2 is supported in pandas 2.2
-    SPECS_PANDAS[k]["pre_install"].extend(["pip install 'numpy<2'; "])
-    # SPECS_PANDAS[k]['install'] = "pip install 'numpy<2'; " + SPECS_PANDAS[k]['install']
-    # SPECS_PANDAS[k]['env_patches'].append("sed -i 's/python=3[[:space:]]*$/python=3.8/g' environment.yml")
+for k in ["0.6", "1.0", "1.1", "1.2", "1.3", "1.4"]:
+    SPECS_PANDAS[k]["install"] =  _pandas_install_script(
+    numpy_req='numpy>=1.19.5,<1.24',
+    cython_req='cython>=0.29.21,<0.30',
+    setuptools_req='setuptools<60',
+    install_cmd='pip install --no-build-isolation . -c /tmp/constraints.txt',
+)
 
-for k in ["1.0"]:
-    # numpy 2 is supported in pandas 2.2
-    SPECS_PANDAS[k]["pre_install"].extend(["pip install 'numpy<1.20.0'; "])
-    # SPECS_PANDAS[k]['install'] = SPECS_PANDAS[k]['install']
-    # SPECS_PANDAS[k]['env_patches'].append("sed -i 's/python=3[[:space:]]*$/python=3.8/g' environment.yml")
 
-for k in ["0.23", "0.24", "0.25", "0.26"]:
+for k in ["2.1", "2.2", "3.0"]:
+    SPECS_PANDAS[k]["install"] =  _pandas_install_script(
+    numpy_req='numpy>=1.24,<2.0',
+    cython_req='cython>=3.0,<3.1',
+    setuptools_req='setuptools<60',
+    install_cmd='pip install --no-build-isolation --editable . -c /tmp/constraints.txt',
+)
+
+SPECS_PANDAS["1.5"]["install"] = _pandas_install_script(
+    numpy_req='numpy>=1.21.6,<1.24',
+    cython_req='cython>=0.29.33,<0.30',
+    setuptools_req='setuptools>=61,<70',
+    install_cmd=[
+        'find pandas/_libs -name "*.so" -type f -delete',
+        'python setup.py build_ext --inplace --force',
+        'python setup.py develop',
+    ],
+    # hypothesis 6.72+ uses dict[str, Any] (PEP 585) which requires Python 3.9+,
+    # but pandas 1.5 runs on Python 3.8.
+    hypothesis_req='hypothesis<6.72',
+)
+
+# pandas 2.2 uses Meson build; Meson 1.11.x is incompatible with Cython 3.0.x.
+# Fix by pinning meson to a compatible version (<= 1.3.x).
+SPECS_PANDAS["2.2"]["install"] = _pandas_install_script(
+    numpy_req='numpy>=1.24,<2.0',
+    cython_req='cython>=3.0,<3.1',
+    setuptools_req='setuptools<60',
+    install_cmd='pip install --no-build-isolation --editable . -c /tmp/constraints.txt',
+    extra_requires=['meson<=1.3.2'],
+)
+
+# pandas 2.0 is incompatible with Cython 3.x; downgrade to Cython <3 (0.29.x)
+# Also: meson-python in this version doesn't support PEP 660 build_editable hook,
+# so editable install fails; use setup.py develop instead.
+SPECS_PANDAS["2.0"]["install"] = _pandas_install_script(
+    numpy_req='numpy>=1.24,<2.0',
+    cython_req='cython<3',
+    setuptools_req='setuptools<60',
+    install_cmd=[
+        "find pandas/_libs -name '*.so' -type f -delete",
+        'python setup.py build_ext --inplace || exit 1',
+        'python setup.py develop',
+    ],
+)
+
+
+for k in ["0.23", "0.24"]:
     # Replace occurrences of "  - python=3" with "  - python=3.7"
     SPECS_PANDAS[k]["pre_install"].extend(
-        ["pip install 'numpy<=1.17.4' 'hypothesis<4'; "]
+        ["pip install 'numpy<=1.17.4' 'hypothesis<4' 'cython'; "]
     )
     SPECS_PANDAS[k][
         "install"
-    ] = "pip install -e . --no-build-isolation --no-use-pep517; pip uninstall pytest-qt -y;"
+    ] = "pip install setuptools; pip install -e . --no-build-isolation ; pip uninstall pytest-qt -y;"
+
+for k in ["0.25", "0.26"]:
+    SPECS_PANDAS[k]["pre_install"].extend(
+        ["pip install 'numpy<=1.17.4' 'hypothesis<4' 'cython'; "]
+    )
+    SPECS_PANDAS[k][
+        "install"
+    ] = "pip install setuptools; python setup.py build_ext --inplace; python setup.py develop; pip uninstall pytest-qt -y;"
 
 for k in ["0.23", "0.24", "0.25", "0.26", "1.0"]:  # Removed 1.0, 1.1, 1.2
     SPECS_PANDAS[k]["pre_install"].append("pip install 'matplotlib<3.3'; ")
@@ -3324,7 +3476,7 @@ for k in ["1.15", "1.16"]:
             r"""[ -f pytest.ini ] && sed -i.bak '/^\[pytest\]/a\markers =\n    slow: marks tests as slow' pytest.ini""",
             "pip install 'setuptools>=48,<60'",
         ],
-        "install": "pip install --no-build-isolation -e .",
+        "install": "rm -rf build/ dist/ *.egg-info/\n\npython setup.py build_ext --inplace\n\npip install --no-build-isolation --no-deps .\n\npython -c \"import numpy; print('NumPy version:', numpy.__version__); print('Config OK')\"",
         # "install": "python setup.py build_ext --inplace -j 4",
         "test_cmd": TEST_NUMPY,
         "distributed_test_cmd": TEST_NUMPY_DISTRIBUTED,
@@ -3345,7 +3497,7 @@ for k in ["1.17"]:
             r"""[ -f pytest.ini ] && sed -i.bak '/^\[pytest\]/a\markers =\n    slow: marks tests as slow' pytest.ini""",
             "pip install 'setuptools>=48,<60'",
         ],
-        "install": "pip install --no-build-isolation -e .",
+        "install": "pip install --no-build-isolation .",
         # "install": "python setup.py build_ext --inplace -j 4",
         "test_cmd": TEST_NUMPY,
         "distributed_test_cmd": TEST_NUMPY_DISTRIBUTED,
@@ -3365,7 +3517,7 @@ for k in ["1.18", "1.19"]:
             "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev && rm -rf branding/",
             "pip install 'setuptools>=48,<60'",
         ],
-        "install": "pip install --no-build-isolation --no-use-pep517 -e .",
+        "install": "pip install --no-build-isolation .",
         "test_cmd": TEST_NUMPY,
         "distributed_test_cmd": TEST_NUMPY_DISTRIBUTED,
         "pip_packages": [
@@ -3382,10 +3534,12 @@ for k in ["1.20", "1.21", "1.22", "1.23", "1.24"]:
         "python": "3.9",
         "packages": "requirements.txt",
         "pre_install": [
-            "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev && rm -rf branding/ && git submodule update --init",
+            "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev && rm -rf branding/",
+            "cd /testbed && git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/ && git config --global http.version HTTP/1.1 && git submodule sync",
+            "git submodule update --init",
             "pip install 'setuptools>=48,<60'",
         ],
-        "install": "pip install --no-build-isolation -e .",
+        "install": "rm -rf build/ dist/ *.egg-info/\n\npython setup.py build_ext --inplace\n\npip install --no-build-isolation --no-deps .\n\npython -c \"import numpy; print('NumPy version:', numpy.__version__); print('Config OK')\"",
         "test_cmd": TEST_NUMPY,
         "distributed_test_cmd": TEST_NUMPY_DISTRIBUTED,
         "pip_packages": [
@@ -3402,9 +3556,11 @@ for k in ["1.25"]:
     SPECS_NUMPY[k] = {
         "packages": "environment.yml",
         "pre_install": [
-            "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev && rm -rf branding/ && git submodule update --init",
+            "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev && rm -rf branding/",
+            "cd /testbed && git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/ && git config --global http.version HTTP/1.1 && git submodule sync",
+            "git submodule update --init",
         ],
-        "install": "pip install --no-build-isolation -e .",
+        "install": "rm -rf build/ dist/ *.egg-info/ && pip install --no-build-isolation --editable . && sed -i 's/raise ImportError(msg) from e/# raise ImportError(msg) from e/' /testbed/numpy/__init__.py",
         "test_cmd": TEST_NUMPY,
         "distributed_test_cmd": TEST_NUMPY_DISTRIBUTED,
         "pip_packages": [
@@ -3418,9 +3574,11 @@ for k in ["1.26"]:
     SPECS_NUMPY[k] = {
         "packages": "environment.yml",
         "pre_install": [
-            "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev && rm -rf branding/ && git submodule update --init",
+            "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev && rm -rf branding/",
+            "cd /testbed && git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/ && git config --global http.version HTTP/1.1 && git submodule sync",
+            "git submodule update --init",
         ],
-        "install": "pip install --no-build-isolation -e .",
+        "install": "rm -rf build/ dist/ *.egg-info/ && pip install --no-build-isolation --editable . && sed -i 's/raise ImportError(msg) from e/# raise ImportError(msg) from e/' /testbed/numpy/__init__.py",
         "test_cmd": TEST_NUMPY,
         "distributed_test_cmd": TEST_NUMPY_DISTRIBUTED,
         "pip_packages": [
@@ -3434,11 +3592,15 @@ for k in ["2.0", "2.1", "2.2"]:
     SPECS_NUMPY[k] = {
         "packages": "environment.yml",
         "pre_install": [
-            "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev && git submodule update --init",
+            "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev",
+            "git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/",
+            "git config --global http.version HTTP/1.1",
+            "cd /testbed && git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/ && git config --global http.version HTTP/1.1 && git submodule sync",
+            "git submodule update --init",
             "python -m ensurepip --upgrade",
             "pip install --upgrade setuptools",
         ],
-        "install": "pip install -e . --no-build-isolation",
+        "install": "rm -rf build/ dist/ *.egg-info/ && pip install -e . --no-build-isolation && sed -i 's/raise ImportError(msg) from e/# raise ImportError(msg) from e/' /testbed/numpy/__init__.py",
         "test_cmd": TEST_NUMPY,
         "distributed_test_cmd": TEST_NUMPY_DISTRIBUTED,
         "pip_packages": [
@@ -3491,7 +3653,9 @@ for k in ["1.0", "1.1"]:
         "python": "3.7",
         "packages": "'pytest<8'",
         "pre_install": [
-            "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev && git submodule update --init",
+            "apt-get -y update && apt-get install -y libopenblas-dev",
+            "cd /testbed && git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/ && git config --global http.version HTTP/1.1 && git submodule sync",
+            "git submodule update --init",
             SCIPY_FLAGS,
         ],
         "install": f"pip install --no-build-isolation -e . --no-use-pep517",
@@ -3514,10 +3678,12 @@ for k in ["1.2"]:
         "python": "3.7",
         "packages": "'pytest<8'",
         "pre_install": [
-            "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev && git submodule update --init",
+            "apt-get -y update && apt-get install -y libopenblas-dev",
+            "cd /testbed && git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/ && git config --global http.version HTTP/1.1 && git submodule sync",
+            "git submodule update --init",
             SCIPY_FLAGS,
         ],
-        "install": f"pip install --no-build-isolation -e .",
+        "install": f"pip install --no-build-isolation -e . --no-use-pep517",
         "test_cmd": TEST_SCIPY,
         "pip_packages": [
             "'cython<=0.29.18'",
@@ -3538,7 +3704,9 @@ for k in ["1.3", "1.4", "1.5"]:
         "python": "3.7",
         "packages": "'pytest<8' suitesparse swig scikit-umfpack",
         "pre_install": [
-            "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev libc6-dev && git submodule update --init",
+            "apt-get -y update && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev libc6-dev",
+            "git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/",
+                        "git submodule update --init",
             SCIPY_FLAGS,
         ],
         "install": f"pip install --no-build-isolation -e .",
@@ -3561,12 +3729,47 @@ for k in ["1.3", "1.4", "1.5"]:
     }
 
 
-for k in ["1.6", "1.7"]:
+for k in ["1.6"]:
     SPECS_SCIPY[k] = {
         "python": "3.8",
         "packages": "'pytest<8' 'meson-python<0.9.0' suitesparse swig scikit-umfpack",
         "pre_install": [
-            "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev libc6-dev && git submodule update --init",
+            "apt-get -y update && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev libc6-dev",
+            "git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/",
+                        "git submodule update --init",
+            SCIPY_FLAGS,
+        ],
+        "install": f"pip install --no-build-isolation -e .",
+        "test_cmd": TEST_SCIPY,
+        "pip_packages": [
+            "'cython>=0.29.18,<3.0'",
+            "'setuptools<60'",
+            "'numpy==1.17.3'",
+            "'pybind11==2.10.1'",
+            "'wheel<0.38.0'",
+            "'pythran<0.15'",
+            # Test dependencies.
+            "pytest-cov",
+            "pytest-xdist",
+            "pytest-timeout",
+            "pytest-env",
+            "asv",
+            "mpmath",
+            "gmpy2",
+            "threadpoolctl",
+            "'pyproject-metadata==0.6.0'",
+            "xarray",
+        ],
+    }
+
+for k in ["1.7"]:
+    SPECS_SCIPY[k] = {
+        "python": "3.8",
+        "packages": "'pytest<8' 'meson-python<0.9.0' suitesparse swig scikit-umfpack",
+        "pre_install": [
+            "apt-get -y update && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev libc6-dev",
+            "cd /testbed && git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/ && git config --global http.version HTTP/1.1 && git submodule sync",
+            "git submodule update --init",
             SCIPY_FLAGS,
         ],
         "install": f"pip install --no-build-isolation -e .",
@@ -3597,7 +3800,9 @@ for k in ["1.8"]:
         "python": "3.8",
         "packages": "pytest 'meson==0.63' 'meson-python==0.8.0' suitesparse swig scikit-umfpack",
         "pre_install": [
-            "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev patchelf libc6-dev && git submodule update --init",
+            "apt-get -y update && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev patchelf libc6-dev",
+            "cd /testbed && git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/ && git config --global http.version HTTP/1.1 && git submodule sync",
+            "git submodule update --init",
             SCIPY_FLAGS,
         ],
         "install": f"pip install --no-build-isolation -e .",
@@ -3628,7 +3833,9 @@ for k in ["1.9"]:
         "python": "3.8",
         "packages": "pytest 'meson==0.64' 'meson-python==0.12.0' suitesparse swig scikit-umfpack",
         "pre_install": [
-            "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev patchelf libc6-dev && git submodule update --init",
+            "apt-get -y update && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev patchelf libc6-dev",
+            "git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/",
+                        "git submodule update --init",
             SCIPY_FLAGS,
         ],
         "install": f"pip install --no-build-isolation -e .",
@@ -3660,7 +3867,9 @@ for k in ["1.10", "1.11"]:
         "python": "3.10",
         "packages": "pytest 'numpy>=1.22.4,<1.29.0' 'meson-python==0.14.0' ninja suitesparse swig scikit-umfpack 'pythran<0.18.0' pybind11 'cython<3' pkg-config openblas",
         "pre_install": [
-            "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev libc6-dev && git submodule update --init",
+            "apt-get -y update && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev libc6-dev",
+            "git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/",
+                        "git submodule update --init",
             SCIPY_FLAGS,
         ],
         "install": f"pip install --no-build-isolation -e .",
@@ -3688,7 +3897,9 @@ for k in ["1.12", "1.13"]:
         "python": "3.10",
         "packages": "pytest 'numpy>=1.22.4,<1.29.0' 'meson-python==0.15.0' ninja suitesparse swig scikit-umfpack 'pythran<0.18.0' pybind11 'cython>=0.29.35,<=3.1' pkg-config openblas",
         "pre_install": [
-            "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev libc6-dev && git submodule update --init",
+            "apt-get -y update && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev libc6-dev",
+            "git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/",
+                        "git submodule update --init",
             SCIPY_FLAGS,
         ],
         "install": f"pip install --no-build-isolation -e .",
@@ -3717,7 +3928,9 @@ for k in ["1.14", "1.15"]:
         "python": "3.11",
         "packages": "pytest 'numpy>=1.23.5,<2.3' compilers 'meson-python' ninja suitesparse swig scikit-umfpack 'pythran<0.18.0' pybind11 'cython<=3.1' pkg-config openblas",
         "pre_install": [
-            "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev libc6-dev && git submodule update --init",
+            "apt-get -y update && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev libc6-dev",
+            "git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/",
+                        "git submodule update --init",
             SCIPY_FLAGS,
         ],
         "install": f"pip install --no-build-isolation -e .",
@@ -3754,7 +3967,7 @@ for k in ["2.3", "3.0", "3.1", "3.2", "3.3", "3.4"]:
             "cat $HOME/requirements.txt",
         ],
         "pre_install": ["conda install murmurhash"],
-        "install": "pip install --no-build-isolation -e .",
+        "install": "pip install --no-build-isolation .",
         "test_cmd": TEST_PYTEST,
         "pip_packages": ["pytest", "'setuptools<60'", "'wheel'", "'cython<0.29'"],
     }
@@ -3767,7 +3980,7 @@ for k in ["2.3", "3.0", "3.1", "3.2", "3.3", "3.4"]:
 #             "sed -i 's/cython>=/cython==/g' $HOME/requirements.txt",
 #             "cat $HOME/requirements.txt",
 #         ],
-#         "install": "pip install --no-build-isolation -e .",
+#         "install": "pip install --no-build-isolation .",
 #         "test_cmd": TEST_PYTEST,
 #         "pip_packages": [
 #             "pytest",
@@ -3784,7 +3997,7 @@ for k in ["2.3", "3.0", "3.1", "3.2", "3.3", "3.4"]:
 #             "sed -i 's/cython>=/cython==/g' $HOME/requirements.txt",
 #             "cat $HOME/requirements.txt",
 #         ],
-#         "install": "pip install --no-build-isolation -e .",
+#         "install": "pip install --no-build-isolation .",
 #         "test_cmd": TEST_PYTEST,
 #         "pip_packages": [
 #             "pytest",
@@ -3806,7 +4019,7 @@ for k in ["0.8", "0.9", "0.10", "0.11"]:
             'export FFLAGS="-fallow-argument-mismatch -fPIC"',
             'export FCFLAGS="-fallow-argument-mismatch -fPIC"',
         ],
-        "install": "pip install --no-build-isolation -e .",
+        "install": "pip install --no-build-isolation .",
         "test_cmd": TEST_PYTEST,
         "pip_packages": [
             "'patsy==0.4.0'",
@@ -3820,7 +4033,7 @@ for k in ["0.11", "0.12"]:
     SPECS_STATSMODELS[k] = {
         "python": "3.7",
         "packages": "pytest 'cython==0.29' 'numpy==1.17'",
-        "install": "pip install --no-build-isolation -e .",
+        "install": "pip install --no-build-isolation .",
         "test_cmd": TEST_PYTEST,
         "pip_packages": [
             "'patsy==0.5.1'",

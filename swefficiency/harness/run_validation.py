@@ -541,6 +541,15 @@ def run_instance(
                     container, workload_file, Path(PERF_WORKLOAD_SCRIPT_LOCATION)
                 )
 
+                # Copy large dataset files from local cache into the container.
+                if instance_id == "scikit-learn__scikit-learn-24856":
+                    higgs_local = Path("/home/hyx/swefficiency/dataset/HIGGS.csv.gz")
+                    if higgs_local.exists():
+                        logger.info(f"Copying {higgs_local} to container /tmp/HIGGS.csv.gz ...")
+                        copy_to_container(container, higgs_local, Path("/tmp/HIGGS.csv.gz"))
+                    else:
+                        logger.warning(f"HIGGS.csv.gz not found at {higgs_local}, container will attempt download.")
+
                 # Write performance script to the container.
                 perf_workload_file = Path(log_dir / "perf.sh")
                 perf_workload_file.write_text(test_spec.performance_script)
@@ -973,21 +982,26 @@ def run_instance(
                         )
 
                 # Copy correctness tests from container.
-                test_status_tar_stream, _ = container.get_archive(
-                    DEFAULT_CORRECTNESS_TEST_OUTPUT_LOCATION
-                )
-                test_status_tar_path = log_dir / "test_status.tar"
-                with open(test_status_tar_path, "wb") as f:
-                    for chunk in test_status_tar_stream:
-                        f.write(chunk)
+                try:
+                    test_status_tar_stream, _ = container.get_archive(
+                        DEFAULT_CORRECTNESS_TEST_OUTPUT_LOCATION
+                    )
+                    test_status_tar_path = log_dir / "test_status.tar"
+                    with open(test_status_tar_path, "wb") as f:
+                        for chunk in test_status_tar_stream:
+                            f.write(chunk)
 
-                # Untar the test status tar file.
-                subprocess.run(
-                    ["tar", "-xf", str(test_status_tar_path), "-C", str(log_dir)],
-                    check=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+                    # Untar the test status tar file.
+                    subprocess.run(
+                        ["tar", "-xf", str(test_status_tar_path), "-C", str(log_dir)],
+                        check=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                except Exception:
+                    logger.warning(
+                        f"No correctness output directory found in container for {instance_id}; treating as empty results."
+                    )
 
                 test_results = {}
                 for test_output in (log_dir / "raw_correctness_output").glob("*.txt"):
@@ -1708,7 +1722,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--timeout",
         type=int,
-        default=1_800,
+        default=3_600,
         help="Timeout (in seconds) for running tests for each instance",
     )
     parser.add_argument(

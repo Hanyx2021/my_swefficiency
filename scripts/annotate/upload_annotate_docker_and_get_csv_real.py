@@ -90,7 +90,7 @@ for instance in dataset:
 instance_id_to_instance_mapping = {datum["instance_id"]: datum for datum in dataset}
 
 # Build the annotated docker containers for upload.
-client = docker.from_env()
+client = docker.from_env(timeout=3600)
 successful, failed = build_annotate_instance_images(
     client,
     test_specs,

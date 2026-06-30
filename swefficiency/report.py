@@ -243,7 +243,8 @@ def generate_report(
     Returns:
         DataFrame with evaluation results
     """
-    ds = datasets.load_dataset(dataset_name, split="test")
+    from swefficiency.harness.utils import load_swefficiency_dataset
+    ds = load_swefficiency_dataset(dataset_name, split="test")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     report_name = pred_run.name

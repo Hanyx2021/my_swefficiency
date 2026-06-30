@@ -192,7 +192,7 @@ ANNOTATE_DOCKER_IMAGE_TEMPLATE = (
 
 # Build docker images and upload them to Docker Hub.
 print("Building and uploading docker images...")
-client = docker.from_env()
+client = docker.from_env(timeout=3600)
 
 run_id = "image-upload-2024-10-30"  # Set the run ID as needed.
 

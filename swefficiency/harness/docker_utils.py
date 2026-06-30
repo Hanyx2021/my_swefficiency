@@ -259,7 +259,7 @@ def exec_run_with_timeout(
             pass
 
     end_time = time.time()
-    return exec_result.decode(), timed_out, end_time - start_time
+    return exec_result.decode('utf-8', errors='replace'), timed_out, end_time - start_time
 
 
 def find_dependent_images(client: docker.DockerClient, image_name: str):
