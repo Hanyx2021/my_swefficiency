@@ -177,6 +177,7 @@ artifacts/
 cache/
 logs/
 data/
+dataset/
 logs_no_test_patch/
 
 *.err
