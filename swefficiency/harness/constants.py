@@ -660,7 +660,7 @@ SPECS_MATPLOTLIB = {
             "apt-get -y update && apt-get -y upgrade && DEBIAN_FRONTEND=noninteractive apt-get install -y imagemagick ffmpeg texlive texlive-latex-extra texlive-fonts-recommended texlive-xetex texlive-luatex cm-super dvipng libfreetype6 libfreetype6-dev libpng-dev libfontconfig1-dev xclip libcairo2-dev pkg-config libgirepository1.0-dev",
             "sed -i 's|git+git://|git+https://|g' environment.yml",
             # Install old GS.
-            "wget -q https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs927/ghostscript-9.27.tar.gz -O /tmp/ghostscript-9.27.tar.gz",
+            "wget -q https://ghfast.top/https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs927/ghostscript-9.27.tar.gz -O /tmp/ghostscript-9.27.tar.gz",
             "tar -xzf /tmp/ghostscript-9.27.tar.gz -C /tmp",
             "cd /tmp/ghostscript-9.27 && ./configure && make && make install",
             "export GS_OPTIONS='-dNOSAFER'",
@@ -706,7 +706,7 @@ SPECS_MATPLOTLIB.update(
             "env_patches": [
                 "apt-get -y update && apt-get -y upgrade && DEBIAN_FRONTEND=noninteractive apt-get install -y imagemagick ffmpeg texlive texlive-latex-extra texlive-fonts-recommended texlive-xetex texlive-luatex cm-super dvipng libfreetype6 libfreetype6-dev libpng-dev libfontconfig1-dev xclip libcairo2-dev pkg-config libgirepository1.0-dev",
                 # Install old GS.
-                "wget -q https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs927/ghostscript-9.27.tar.gz -O /tmp/ghostscript-9.27.tar.gz",
+                "wget -q https://ghfast.top/https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs927/ghostscript-9.27.tar.gz -O /tmp/ghostscript-9.27.tar.gz",
                 "tar -xzf /tmp/ghostscript-9.27.tar.gz -C /tmp",
                 "cd /tmp/ghostscript-9.27 && ./configure && make && make install",
                 "export GS_OPTIONS='-dNOSAFER'",
@@ -750,7 +750,7 @@ SPECS_MATPLOTLIB.update(
             "env_patches": [
                 "apt-get -y update && apt-get -y upgrade && DEBIAN_FRONTEND=noninteractive apt-get install -y imagemagick ffmpeg libfreetype6 libfreetype6-dev pkg-config texlive texlive-latex-extra texlive-fonts-recommended texlive-xetex texlive-luatex cm-super libpng-dev libfontconfig1-dev xclip libcairo2-dev pkg-config libgirepository1.0-dev",
                 # Install old GS.
-                "wget -q https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs927/ghostscript-9.27.tar.gz -O /tmp/ghostscript-9.27.tar.gz",
+                "wget -q https://ghfast.top/https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs927/ghostscript-9.27.tar.gz -O /tmp/ghostscript-9.27.tar.gz",
                 "tar -xzf /tmp/ghostscript-9.27.tar.gz -C /tmp",
                 "cd /tmp/ghostscript-9.27 && ./configure && make && make install",
                 "export GS_OPTIONS='-dNOSAFER'",
@@ -788,7 +788,7 @@ SPECS_MATPLOTLIB.update(
             "env_patches": [
                 "apt-get -y update && apt-get -y upgrade && apt-get install -y imagemagick ffmpeg libfreetype6 libfreetype6-dev pkg-config libpng-dev libfontconfig1-dev xclip libcairo2-dev pkg-config libgirepository1.0-dev",
                 # Install old GS.
-                "wget -q https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs927/ghostscript-9.27.tar.gz -O /tmp/ghostscript-9.27.tar.gz",
+                "wget -q https://ghfast.top/https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs927/ghostscript-9.27.tar.gz -O /tmp/ghostscript-9.27.tar.gz",
                 "tar -xzf /tmp/ghostscript-9.27.tar.gz -C /tmp",
                 "cd /tmp/ghostscript-9.27 && ./configure && make && make install",
                 "export GS_OPTIONS='-dNOSAFER'",
@@ -822,7 +822,7 @@ SPECS_MATPLOTLIB.update(
             "env_patches": [
                 "apt-get -y update && apt-get -y upgrade && apt-get install -y imagemagick ffmpeg libfreetype6 libfreetype6-dev libpng-dev libfontconfig1-dev xclip libcairo2-dev pkg-config libgirepository1.0-dev",
                 # Install old GS.
-                "wget -q https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs927/ghostscript-9.27.tar.gz -O /tmp/ghostscript-9.27.tar.gz",
+                "wget -q https://ghfast.top/https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs927/ghostscript-9.27.tar.gz -O /tmp/ghostscript-9.27.tar.gz",
                 "tar -xzf /tmp/ghostscript-9.27.tar.gz -C /tmp",
                 "cd /tmp/ghostscript-9.27 && ./configure && make && make install",
                 "export GS_OPTIONS='-dNOSAFER'",
@@ -3431,6 +3431,11 @@ for k in ["1.1", "1.2", "1.3", "1.4", "1.5"]:
             "cat environment.yml",
         ]
     )
+
+# Use mamba for pandas 1.4 and 1.5 to avoid libsolv solver crash
+# (conda+libmamba solver hits assertion failure in solver_addrule after ~40 min)
+for k in ["1.4", "1.5"]:
+    SPECS_PANDAS[k]["env_command"] = "mamba"
 
 MAP_REPO_VERSION_TO_SPECS.update({"pandas-dev/pandas": SPECS_PANDAS})
 

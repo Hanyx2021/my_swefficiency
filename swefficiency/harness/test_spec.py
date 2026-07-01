@@ -359,13 +359,13 @@ def make_env_script_list(
         ]
     )
 
-    env_command = "conda"  # "conda"
+    env_command = specs.get("env_command", "conda")
 
     # Create conda environment according to install instructinos
     pkgs = specs.get("packages", "")
     if pkgs == "requirements.txt":
         # Create environment
-        cmd = f"{env_command} create -n {env_name} python={specs['python']} -y"
+        cmd = f"{env_command} create -n {env_name} python={specs['python']} pip -y"
         reqs_commands.append(cmd)
 
         # Install dependencies
