@@ -1117,6 +1117,34 @@ perf_start_tag = "PERF_START:"
 perf_end_tag = "PERF_END:"
 
 
+def _get_california_housing_download_commands():
+    """Download and cache California housing dataset for scikit-learn workloads."""
+    return [
+        "    echo 'Preparing California housing dataset...'",
+        "    DATA_HOME=\"${HOME}/scikit_learn_data\"",
+        "    mkdir -p \"${DATA_HOME}\"",
+        "    if [ ! -s \"${DATA_HOME}/cal_housing.tgz\" ] || ! gzip -t \"${DATA_HOME}/cal_housing.tgz\" 2>/dev/null; then",
+        "        rm -f /tmp/california_housing.tgz \"${DATA_HOME}/cal_housing.tgz\"",
+        "        echo 'Downloading from primary URL...'",
+        "        curl -L \\",
+        "             --retry 10 --retry-delay 5 --max-time 120 \\",
+        "             -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' \\",
+        "             -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8' \\",
+        "             -o /tmp/california_housing.tgz \\",
+        "             https://raw.githubusercontent.com/ageron/handson-ml2/master/datasets/housing/housing.tgz",
+        "        if [ -s /tmp/california_housing.tgz ] && gzip -t /tmp/california_housing.tgz 2>/dev/null; then",
+        "            mv /tmp/california_housing.tgz \"${DATA_HOME}/cal_housing.tgz\"",
+        "            echo 'Valid archive cached.'",
+        "        else",
+        "            echo 'FATAL: Could not download valid archive. Aborting.'",
+        "            exit 1",
+        "        fi",
+        "    else",
+        "        echo 'Archive already cached and valid.'",
+        "    fi",
+    ]
+
+
 def make_performance_script_list(
     instance, specs, env_name, repo_directory, base_commit, test_patch
 ):
@@ -1154,24 +1182,7 @@ def make_performance_script_list(
     elif instance[KEY_INSTANCE_ID] == "scikit-learn__scikit-learn-29060":
         eval_commands.extend([
             "if grep -q 'fetch_california_housing' /tmp/workload.py; then",
-            "    echo 'Preparing California housing dataset...'",
-            "    DATA_HOME=\"${HOME}/scikit_learn_data\"",
-            "    mkdir -p \"${DATA_HOME}\"",
-            "    rm -f /tmp/california_housing.tgz",
-            "    echo 'Downloading from primary URL...'",
-            "    curl -L \\",
-            "         --retry 10 --retry-delay 5 --max-time 120 \\",
-            "         -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' \\",
-            "         -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8' \\",
-            "         -o /tmp/california_housing.tgz \\",
-            "         https://raw.githubusercontent.com/ageron/handson-ml2/master/datasets/housing/housing.tgz",
-            "    if [ -s /tmp/california_housing.tgz ] && gzip -t /tmp/california_housing.tgz 2>/dev/null; then",
-            "        mv /tmp/california_housing.tgz \"${DATA_HOME}/cal_housing.tgz\"",
-            "        echo 'Valid archive cached.'",
-            "    else",
-            "        echo 'FATAL: Could not obtain a valid cal_housing.tgz. Aborting.'",
-            "        exit 1",
-            "    fi",
+            *_get_california_housing_download_commands(),
 
             "    echo 'Patching /tmp/workload.py...'",
             "    python3 -c \"",
@@ -1226,28 +1237,7 @@ def make_performance_script_list(
     elif instance[KEY_INSTANCE_ID] == "scikit-learn__scikit-learn-15615":
         eval_commands.extend([
             "if grep -q 'fetch_california_housing' /tmp/workload.py; then",
-            "    echo 'Preparing California housing dataset (if not cached)...'",
-            "    DATA_HOME=\"${HOME}/scikit_learn_data\"",
-            "    mkdir -p \"${DATA_HOME}\"",
-            "    if [ ! -s \"${DATA_HOME}/cal_housing.tgz\" ] || ! gzip -t \"${DATA_HOME}/cal_housing.tgz\" 2>/dev/null; then",
-            "        rm -f /tmp/california_housing.tgz \"${DATA_HOME}/cal_housing.tgz\"",
-            "        echo 'Downloading from primary URL...'",
-            "        curl -L \\",
-            "             --retry 10 --retry-delay 5 --max-time 120 \\",
-            "             -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' \\",
-            "             -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8' \\",
-            "             -o /tmp/california_housing.tgz \\",
-            "             https://raw.githubusercontent.com/ageron/handson-ml2/master/datasets/housing/housing.tgz",
-            "        if [ -s /tmp/california_housing.tgz ] && gzip -t /tmp/california_housing.tgz 2>/dev/null; then",
-            "            mv /tmp/california_housing.tgz \"${DATA_HOME}/cal_housing.tgz\"",
-            "            echo 'Valid archive cached.'",
-            "        else",
-            "            echo 'FATAL: Could not download valid archive. Aborting.'",
-            "            exit 1",
-            "        fi",
-            "    else",
-            "        echo 'Archive already cached and valid.'",
-            "    fi",
+            *_get_california_housing_download_commands(),
             "    echo 'Patching /tmp/workload.py for local archive loading (nan_euclidean_distances version)...'",
             "    python3 -c \"",
             "import pathlib, re",
@@ -1320,7 +1310,7 @@ def make_performance_script_list(
             "    echo 'workload.py patched: replaced dtype_backend and _pa_array for older pandas'",
             "fi",
         ])
-    elif instance[KEY_INSTANCE_ID] == "pandas-dev__pandas-53150":
+    elif instance[KEY_INSTANCE_ID].startswith("pandas-dev__pandas"):
         eval_commands.extend([
             "if grep -q 'makeStringIndex' /tmp/workload.py; then",
             "    python3 -c \"",
@@ -1331,7 +1321,7 @@ def make_performance_script_list(
             "pathlib.Path('/tmp/workload_new.py').write_text(code)",
             "\"",
             "    mv /tmp/workload_new.py /tmp/workload.py",
-            "    echo 'workload.py patched: replaced tm.makeStringIndex with pd.Index for pandas 2.0'",
+            "    echo 'workload.py patched: replaced tm.makeStringIndex with pd.Index for older pandas'",
             "fi",
         ])
     elif instance[KEY_INSTANCE_ID] == "scikit-learn__scikit-learn-24856":

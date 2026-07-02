@@ -3434,8 +3434,38 @@ for k in ["1.1", "1.2", "1.3", "1.4", "1.5"]:
 
 # Use mamba for pandas 1.4 and 1.5 to avoid libsolv solver crash
 # (conda+libmamba solver hits assertion failure in solver_addrule after ~40 min)
+# Also aggressively strip unnecessary packages to reduce SAT problem size.
+# Some pandas 1.4/1.5 commits lack section headers in environment.yml,
+# making the awk section-removal patch a no-op. Use explicit package-name
+# removals as a fallback.
 for k in ["1.4", "1.5"]:
     SPECS_PANDAS[k]["env_command"] = "mamba"
+    SPECS_PANDAS[k]["env_patches"].extend([
+        # Heavy packages not needed for testing
+        "sed -i '/pytorch/d' environment.yml",
+        "sed -i '/geopandas-base/d' environment.yml",
+        # Benchmarking (not needed for tests)
+        "sed -i '/asv/d' environment.yml",  # "asv" unique enough: not in pytest-asyncio, fastparquet, etc.
+        # Dask ecosystem (not needed for core pandas tests)
+        "sed -i '/dask-core/d' environment.yml",
+        "sed -i '/toolz/d' environment.yml",  # unique enough
+        "sed -i '/partd/d' environment.yml",  # unique enough
+        "sed -i '/cloudpickle/d' environment.yml",
+        # Jupyter UI (not needed for testing)
+        "sed -i '/ipywidgets/d' environment.yml",
+        "sed -i '/nbformat/d' environment.yml",
+        "sed -i '/notebook/d' environment.yml",  # matches notebook>=6.0.3
+        # Web deps (not needed for testing)
+        "sed -i '/markdown/d' environment.yml",  # only "  - markdown" in the env
+        "sed -i '/feedparser/d' environment.yml",
+        # Nice-to-have testing tools
+        "sed -i '/pytest-instafail/d' environment.yml",
+        # Type stubs (only needed for mypy, which is already removed)
+        "sed -i '/types-python-dateutil/d' environment.yml",
+        "sed -i '/types-PyMySQL/d' environment.yml",
+        "sed -i '/types-pytz/d' environment.yml",
+        "sed -i '/types-setuptools/d' environment.yml",
+    ])
 
 MAP_REPO_VERSION_TO_SPECS.update({"pandas-dev/pandas": SPECS_PANDAS})
 
