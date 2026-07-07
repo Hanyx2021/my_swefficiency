@@ -254,7 +254,9 @@ def make_repo_script_list(
         f"chmod -R 777 {repo_directory}",
         f"cd {repo_directory}",
         "git fetch origin --tags",
-        f"git fetch origin {base_commit}",
+        # --single-branch clones only have the default branch. If base_commit
+        # is on another branch (or unreachable), broaden the fetch and retry.
+        f"git fetch origin {base_commit} || {{ git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'; git fetch origin; git fetch origin {base_commit}; }}",
         f"git reset --hard {base_commit}",
         "git remote remove origin",
         "source /opt/miniconda3/bin/activate",
@@ -294,10 +296,14 @@ def make_repo_script_list(
         ])
 
     # Add NumPy downgrade for astropy to avoid compatibility issues
+    # NumPy 2.0 removed C API members (elsize, etc.) and changed Python-level
+    # behaviour (copy=False). Old astropy source hits several of these.
     if "astropy" in repo:
         setup_commands.extend([
             "# Check if NumPy downgrade is needed for astropy",
-            "if grep -q 'in1d' /testbed/astropy/units/quantity_helper/function_helpers.py; then",
+            "if grep -q 'in1d' /testbed/astropy/units/quantity_helper/function_helpers.py"
+            " || grep -rq 'elsize' /testbed/astropy/ --include='*.c' --include='*.h' 2>/dev/null"
+            " || grep -rq 'copy=False' /testbed/astropy/ --include='*.py' 2>/dev/null; then",
             "    pip install 'numpy<2.0'",
             "fi",
         ])
@@ -1310,18 +1316,68 @@ def make_performance_script_list(
             "    echo 'workload.py patched: replaced dtype_backend and _pa_array for older pandas'",
             "fi",
         ])
+    elif instance[KEY_INSTANCE_ID] == "pandas-dev__pandas-52548":
+        eval_commands.extend([
+            # ArrowDtype, dtype_backend='pyarrow', and engine='pyarrow' are
+            # not supported in older pandas (pre-2.0).  The workload creates
+            # ArrowDtype(pa.timestamp(unit='ns')) and calls read_csv with
+            # engine='pyarrow' + dtype_backend='pyarrow' which triggers an
+            # OverflowError in old pyarrow date-conversion code.
+            "if grep -q \"dtype_backend='pyarrow'\" /tmp/workload.py; then",
+            "    # Replace ArrowDtype constructor with plain numpy datetime64",
+            "    sed -i \"s/pd\\.ArrowDtype(pa\\.timestamp(unit='ns'))/'datetime64[ns]'/\" /tmp/workload.py",
+            "    # Drop pyarrow-specific kwargs (keep parse_dates intact)",
+            "    sed -i \"s/, dtype_backend='pyarrow'//\" /tmp/workload.py",
+            "    sed -i \"s/, engine='pyarrow'//\" /tmp/workload.py",
+            "    echo 'workload.py patched: removed ArrowDtype and dtype_backend for pandas-52548'",
+            "fi",
+        ])
+    elif instance[KEY_INSTANCE_ID] in ("pandas-dev__pandas-51549", "pandas-dev__pandas-52525"):
+        eval_commands.extend([
+            # pyarrow-backed dtypes cause IndexError/TypeError in older pandas
+            "if grep -q '\\[pyarrow\\]' /tmp/workload.py; then",
+            "    sed -i 's/\\[pyarrow\\]//g' /tmp/workload.py",
+            "    # 'null' isn't a valid numpy dtype; use 'object' instead",
+            "    sed -i \"s/dtype='null'/dtype='object'/\" /tmp/workload.py",
+            "    echo 'workload.py patched: removed [pyarrow] dtype suffix for older pandas'",
+            "fi",
+        ])
+    elif instance[KEY_INSTANCE_ID] == "pandas-dev__pandas-51439":
+        # ArrowExtensionArray in older pandas lacks __array__(), so
+        # np.asarray(self, dtype=dtype) in to_numpy() falls back to
+        # element-by-element iteration — ~13 s/call for 10M elements.
+        # The workload calls to_numpy() 5 000 times, which would take
+        # ~18 h.  The underlying pyarrow ChunkedArray DOES have
+        # __array__() (sub-millisecond).  Monkey-patch __array__ to
+        # delegate to _data so the pre-edit measurement completes.
+        eval_commands.extend([
+            "python3 -c \"",
+            "import numpy as np",
+            "from pandas.core.arrays.arrow.array import ArrowExtensionArray",
+            "ArrowExtensionArray.__array__ = "
+            "lambda self, dtype=None: np.asarray(self._data, dtype=dtype)",
+            "\"",
+            "echo 'workload.py: monkey-patched ArrowExtensionArray.__array__ for 51439'",
+        ])
     elif instance[KEY_INSTANCE_ID].startswith("pandas-dev__pandas"):
         eval_commands.extend([
             "if grep -q 'makeStringIndex' /tmp/workload.py; then",
-            "    python3 -c \"",
-            "import pathlib",
+            "    # Remove try/except ImportError fallback blocks first (avoids SyntaxError)",
+            "    sed -i '/^try:$/{N;N;N;/except ImportError:/d}' /tmp/workload.py",
+            "    # Remove standalone import pandas._testing as tm",
+            "    sed -i '/^import pandas\\._testing as tm$/d' /tmp/workload.py",
+            "    # Replace tm.makeStringIndex(EXPR) with pd.Index equivalent",
+            "    # cat+mv creates a new inode with default (writable) permissions,",
+            "    # avoiding overlayfs issues that cause chmod to be a no-op.",
+            "    cat /tmp/workload.py > /tmp/workload_tmp.py && \\",
+            "    mv /tmp/workload_tmp.py /tmp/workload.py",
+            "    python3 << 'PYEOF'",
+            "import pathlib, re",
             "code = pathlib.Path('/tmp/workload.py').read_text()",
-            "code = code.replace('import pandas._testing as tm\\n', '')",
-            "code = code.replace('tm.makeStringIndex(N)', 'pd.Index([f\\\"str{i}\\\" for i in range(N)])')",
-            "pathlib.Path('/tmp/workload_new.py').write_text(code)",
-            "\"",
-            "    mv /tmp/workload_new.py /tmp/workload.py",
-            "    echo 'workload.py patched: replaced tm.makeStringIndex with pd.Index for older pandas'",
+            "code = re.sub(r'tm\\.makeStringIndex\\(([^)]+)\\)', r'pd.Index([f\"str{i}\" for i in range(\\1)])', code)",
+            "pathlib.Path('/tmp/workload.py').write_text(code)",
+            "PYEOF",
+            "    echo 'workload.py patched: replaced tm.makeStringIndex with pd.Index'",
             "fi",
         ])
     elif instance[KEY_INSTANCE_ID] == "scikit-learn__scikit-learn-24856":
@@ -1347,7 +1403,7 @@ def make_performance_script_list(
             "fi",
         ])
 
-    # Compute the before and after
+    # Compute the before and after.
     eval_commands.extend(
         [
             f"echo '{perf_start_tag}'",
@@ -1369,6 +1425,17 @@ def make_performance_profiling_script_list(
     eval_commands = _get_basic_eval_components(
         instance, specs, env_name, repo_directory, base_commit
     )
+
+    if instance[KEY_INSTANCE_ID] == "pandas-dev__pandas-51439":
+        eval_commands.extend([
+            "python3 -c \"",
+            "import numpy as np",
+            "from pandas.core.arrays.arrow.array import ArrowExtensionArray",
+            "ArrowExtensionArray.__array__ = "
+            "lambda self, dtype=None: np.asarray(self._data, dtype=dtype)",
+            "\"",
+            "echo 'workload.py: monkey-patched ArrowExtensionArray.__array__ for 51439'",
+        ])
 
     # Compute the before and after
     eval_commands.extend(
@@ -1635,6 +1702,79 @@ def make_test_spec(instance: SWEfficiencyInstance, observed_versions=None) -> Te
 
     specs = MAP_REPO_VERSION_TO_SPECS[repo][version]
 
+    # --- Instance-level spec overrides (must be BEFORE make_repo_script_list) ---
+
+    # Astropy 3.0/3.1/3.2 on env image 555bee985386fd03d06a6f:
+    # The bare `pip` command resolves to the base env's Python 3.11 pip,
+    # which installs packages to /opt/miniconda3/lib/python3.11/site-packages.
+    # But the testbed conda env uses Python 3.7, whose `python` binary can ONLY
+    # see /opt/miniconda3/envs/testbed/lib/python3.7/site-packages.  So any
+    # package installed with bare `pip` is invisible to the actual runtime.
+    #
+    # Fix: use `python -m pip` (which uses the testbed env's Python 3.7 pip).
+    # Python 3.7 still supports the setuptools "develop" egg-link mechanism,
+    # so `pip install -e` works correctly (unlike on Python 3.11 where it
+    # silently produces a non-importable package).  `--no-build-isolation` is
+    # needed because ah_bootstrap.py (3.0/3.1) and extension_helpers/ (3.2) are
+    # local source-tree modules that pip's build isolation cannot see.
+    #
+    # 3.2 additionally needs jinja2 (imported by astropy/modeling/setup_package.py
+    # during metadata prep) and extension-helpers (setup.py line 67 imports it;
+    # extension_helpers/ is a git submodule — an empty directory after clone —
+    # so --no-build-isolation can't find it either).  Both are not in the SPECS
+    # pip_packages for 3.2.
+    _astropy_cfg = {
+        "3.0": {},
+        "3.1": {},
+        "3.2": {"pre_pkgs": ["jinja2", "extension-helpers", "wheel"]},
+    }
+    if instance_id.startswith("astropy__astropy") and version in _astropy_cfg:
+        specs = dict(specs)
+        pkgs = _astropy_cfg[version].get("pre_pkgs", [])
+        if pkgs:
+            pre_installs = " && ".join(
+                f"python -m pip install '{p}'" for p in pkgs
+            )
+            specs["install"] = (
+                f"{pre_installs} && "
+                "python -m pip install --no-build-isolation -e '.[dev_all]'"
+            )
+        else:
+            specs["install"] = (
+                "python -m pip install --no-build-isolation -e '.[dev_all]'"
+            )
+
+    # pandas-47781 (SPECS 1.4): env image c7de597aac5fcdac95013b (from Docker
+    # cache) has a corrupted non-editable pandas install where the compiled
+    # parsing.cpython-38-*.so is missing the format_is_iso symbol that the
+    # corresponding Python source imports.  Switch to editable install (-e)
+    # so the source tree's .so files (built by build_ext --inplace) are used
+    # directly, avoiding the stale wheel in site-packages.
+    if instance_id == "pandas-dev__pandas-47781":
+        specs = dict(specs)
+        specs["install"] = specs["install"].replace(
+            "pip install --no-build-isolation . -c /tmp/constraints.txt",
+            "pip install --no-build-isolation --editable . -c /tmp/constraints.txt",
+        )
+
+    # pandas-53731 (SPECS 2.0): the SPECS install uses cython<3 (0.29.x)
+    # but the base commit's setup.py line 408 has a hard version check:
+    #   RuntimeError: Cannot cythonize with old Cython version
+    #                  (0.29.37 installed, needs 3.0.0)
+    # Our previous approach (sed on pyproject.toml) only relaxed pip's
+    # build requirement, not setup.py's runtime check.  Instead, upgrade
+    # the cython constraint from <3 to >=3.0,<3.1 so both pip and setup.py
+    # are satisfied.  The .pyx files in this PR are backward-compatible
+    # with cython 3.x (the PR just fixes a function-signature warning).
+    if instance_id == "pandas-dev__pandas-53731":
+        specs = dict(specs)
+        specs["install"] = specs["install"].replace(
+            "cython<3",
+            "cython>=3.0,<3.1"
+        )
+
+    # -------------------------------------------------------------------------
+
     repo_script_list = make_repo_script_list(
         specs,
         repo,
@@ -1674,6 +1814,42 @@ def make_test_spec(instance: SWEfficiencyInstance, observed_versions=None) -> Te
     if workload_text.strip() == "nan" or workload_text.strip() == "":
         workload_text = None
 
+    # --- Filter network/DB-dependent tests from single_thread_tests ---
+    # These test files need live connections to remote services (Google
+    # BigQuery, AWS S3, GCS, SQL databases, etc.) that are unavailable in
+    # offline evaluation containers.  In older pandas versions, the tests
+    # inside these files are not consistently marked with
+    # @pytest.mark.network, so the `-m "not network and not db"` pytest
+    # filter in correctness.sh does not exclude them.  Left in the
+    # single-thread list they hang indefinitely waiting for network
+    # connections (especially problematic behind China's firewall).
+    #
+    # Removing them from single_thread_tests means they will run in the
+    # parallel phase instead, where they are still subject to
+    # `-m "not network and not db"` — if the markers work they are
+    # skipped; if not, they fail fast (ConnectionError/Timeout) rather
+    # than hanging because the parallel phase moves on.
+    _NETWORK_DB_TEST_PATTERNS = (
+        "test_gbq.py",       # Google BigQuery
+        "test_s3.py",        # AWS S3
+        "test_gcs.py",       # Google Cloud Storage
+        "test_sql.py",       # SQL database connections
+        "test_html.py",      # pd.read_html() fetches URLs
+        "test_clipboard.py", # may access network resources
+        "test_network.py",   # io/parser: explicit network tests
+    )
+    if instance["repo"] == "pandas-dev/pandas":
+        raw_st = instance.get("single_thread_tests", [])
+        if raw_st:
+            single_thread_tests = [
+                t for t in raw_st
+                if not t.endswith(_NETWORK_DB_TEST_PATTERNS)
+            ]
+        else:
+            single_thread_tests = []
+    else:
+        single_thread_tests = instance.get("single_thread_tests", [])
+
     return TestSpec(
         instance_id=instance_id,
         repo=repo,
@@ -1698,6 +1874,6 @@ def make_test_spec(instance: SWEfficiencyInstance, observed_versions=None) -> Te
             instance, specs, env_name, repo_directory, base_commit, test_patch
         ),
         build_timeout=build_timeout,
-        single_thread_tests=instance.get("single_thread_tests", []),
+        single_thread_tests=single_thread_tests,
         base_commit=base_commit,
     )

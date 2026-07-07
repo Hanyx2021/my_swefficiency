@@ -1403,10 +1403,10 @@ def get_model_predictions_sweagent(dataset_path: str):
     return dataset
 
 
-def delete_instance_container(client, dataset):
+def delete_instance_container(client, dataset, run_id):
     instance_ids = [dp["instance_id"] for dp in dataset]
     container_names = set(
-        [f"sweb.eval.{instance_id}.test" for instance_id in instance_ids]
+        [f"sweb.eval.{instance_id}.{run_id}" for instance_id in instance_ids]
     )
     container_list = client.containers.list(all=True)
     for container in container_list:
@@ -1633,7 +1633,7 @@ def main(
     random.shuffle(dataset)  # Shuffle with fixed seed for load balancing.
 
     existing_images = list_images(client)
-    delete_instance_container(client, dataset)
+    delete_instance_container(client, dataset, run_id)
     print(f"Running {len(dataset)} unevaluated instances...")
     if not dataset:
         print("No instances to run.")
@@ -1681,7 +1681,7 @@ def main(
         )
 
     # this will remove the container in the gloden run
-    delete_instance_container(client, dataset)
+    delete_instance_container(client, dataset, run_id)
 
     # clean images + make final report
     clean_images(client, existing_images, cache_level, clean)

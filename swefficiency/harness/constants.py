@@ -296,6 +296,16 @@ for k in SPECS_SKLEARN:
     # HACK: This is needed because we use an AST pruning technique to identify tests.
     SPECS_SKLEARN[k]["pip_packages"].extend(["intervaltree"])
 
+# sklearn 1.5: setuptools 59.5.0 does not support PEP 660's build_editable hook,
+# so `pip install --no-build-isolation -e .` fails. Use legacy setup.py develop
+# instead (matching the 1.3/1.4 pattern).
+SPECS_SKLEARN["1.5"]["install"] = (
+    "pip install numpy==1.23.5 cython>=3.0 setuptools==59.5.0\n\n"
+    "rm -rf build/ dist/ *.egg-info/\n\n"
+    "python setup.py build_ext --inplace\n\n"
+    "python setup.py develop"
+)
+
 SPECS_FLASK = {
     "2.0": {
         "python": "3.9",
@@ -1052,6 +1062,33 @@ for k in ["3.2", "4.1", "4.2", "4.3"]:
 
 for k in ["5.0", "5.1", "5.2", "v5.3"]:
     SPECS_ASTROPY[k].setdefault("pre_install", []).append(set_setuptools_only)
+
+# astropy 3.0/3.1: pip install -e .[dev_all] may upgrade numpy to 2.x, which removes
+# the pre-2.0 C API (elsize, copy=False) that these old C extensions depend on.
+# Pin numpy<2.0 before the editable install.
+for k in ["3.0", "3.1"]:
+    SPECS_ASTROPY[k].setdefault("pre_install", []).extend([
+        "pip install 'numpy<2.0'",
+    ])
+
+# astropy 3.0: astropy-helpers (build dependency) imports pkg_resources which was
+# removed from setuptools >= 70. Pin setuptools to a version that still ships it.
+SPECS_ASTROPY["3.0"].setdefault("pre_install", []).extend([
+    "pip install 'setuptools<70'",
+])
+# astropy 3.1: same pkg_resources issue as 3.0.
+SPECS_ASTROPY["3.1"].setdefault("pre_install", []).extend([
+    "pip install 'setuptools<70'",
+])
+
+# astropy 3.2: building old Cython from source fails on Python 3.11+ because
+# collections.Iterable was removed. Pre-install a pre-built cython wheel.
+# Also need setuptools<70: the build environment (astropy-helpers) imports
+# pkg_resources which was removed in setuptools >= 70.
+SPECS_ASTROPY["3.2"].setdefault("pre_install", []).extend([
+    "pip install 'cython<3.1'",
+    "pip install 'setuptools<70'",
+])
 
 
 SPECS_SYMPY = {}
