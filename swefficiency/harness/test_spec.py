@@ -1348,16 +1348,13 @@ def make_performance_script_list(
         # element-by-element iteration — ~13 s/call for 10M elements.
         # The workload calls to_numpy() 5 000 times, which would take
         # ~18 h.  The underlying pyarrow ChunkedArray DOES have
-        # __array__() (sub-millisecond).  Monkey-patch __array__ to
-        # delegate to _data so the pre-edit measurement completes.
+        # __array__() (sub-millisecond).  Prepend a monkey-patch to
+        # the workload file so __array__ delegates to _data.
         eval_commands.extend([
-            "python3 -c \"",
-            "import numpy as np",
-            "from pandas.core.arrays.arrow.array import ArrowExtensionArray",
-            "ArrowExtensionArray.__array__ = "
-            "lambda self, dtype=None: np.asarray(self._data, dtype=dtype)",
-            "\"",
-            "echo 'workload.py: monkey-patched ArrowExtensionArray.__array__ for 51439'",
+            # Write to stdout + redirect + mv to work around overlayfs
+            # permission issues (chmod is a no-op on overlayfs).
+            "python3 -c \"import pathlib, sys; c = pathlib.Path('/tmp/workload.py').read_text(); sys.stdout.write('import numpy as _np\\nfrom pandas.core.arrays.arrow.array import ArrowExtensionArray as _AEA\\n_AEA.__array__ = lambda self, dtype=None: _np.asarray(self._data, dtype=dtype)\\n' + c)\" > /tmp/workload_patched.py && mv /tmp/workload_patched.py /tmp/workload.py",
+            "echo 'workload.py: prepended ArrowExtensionArray.__array__ monkey-patch for 51439'",
         ])
     elif instance[KEY_INSTANCE_ID].startswith("pandas-dev__pandas"):
         eval_commands.extend([
@@ -1428,13 +1425,8 @@ def make_performance_profiling_script_list(
 
     if instance[KEY_INSTANCE_ID] == "pandas-dev__pandas-51439":
         eval_commands.extend([
-            "python3 -c \"",
-            "import numpy as np",
-            "from pandas.core.arrays.arrow.array import ArrowExtensionArray",
-            "ArrowExtensionArray.__array__ = "
-            "lambda self, dtype=None: np.asarray(self._data, dtype=dtype)",
-            "\"",
-            "echo 'workload.py: monkey-patched ArrowExtensionArray.__array__ for 51439'",
+            "python3 -c \"import pathlib, sys; c = pathlib.Path('/tmp/workload.py').read_text(); sys.stdout.write('import numpy as _np\\nfrom pandas.core.arrays.arrow.array import ArrowExtensionArray as _AEA\\n_AEA.__array__ = lambda self, dtype=None: _np.asarray(self._data, dtype=dtype)\\n' + c)\" > /tmp/workload_patched.py && mv /tmp/workload_patched.py /tmp/workload.py",
+            "echo 'workload.py: prepended ArrowExtensionArray.__array__ monkey-patch for 51439'",
         ])
 
     # Compute the before and after
