@@ -161,7 +161,7 @@ def build_image(
             else build_timeout
         )
 
-        for i in range(2):
+        for i in range(3):
             try:
                 response = client.api.build(
                     path=str(build_dir),
@@ -195,9 +195,9 @@ def build_image(
                         )
                 break
             except Exception as e:
-                if i < 1:
+                if i < 2:
                     logger.warning(
-                        f"Failed to build image {image_name} (attempt {i+1}/2): {e}\nRetrying..."
+                        f"Failed to build image {image_name} (attempt {i+1}/3): {e}\nRetrying..."
                     )
                 else:
                     logger.error(

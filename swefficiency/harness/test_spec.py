@@ -250,13 +250,14 @@ def make_repo_script_list(
     setup_commands = [
         "git config --global http.lowSpeedLimit 0",
         "git config --global http.postBuffer 524288000",
-        f"git clone --single-branch -o origin https://ghfast.top/https://github.com/{repo} {repo_directory} || (sleep 10 && git clone --single-branch -o origin https://ghfast.top/https://github.com/{repo} {repo_directory})",
+        # Retry ghfast.top 3×, then fall back to github.com directly
+        f"for i in 1 2 3; do git clone --single-branch -o origin https://ghfast.top/https://github.com/{repo} {repo_directory} && break; sleep 10; done; [ -d {repo_directory}/.git ] || git clone --single-branch -o origin https://github.com/{repo} {repo_directory} || git clone --single-branch -o origin https://ghfast.top/https://github.com/{repo} {repo_directory}",
         f"chmod -R 777 {repo_directory}",
         f"cd {repo_directory}",
-        "git fetch origin --tags",
+        "git fetch origin --tags 2>/dev/null || true",
         # --single-branch clones only have the default branch. If base_commit
         # is on another branch (or unreachable), broaden the fetch and retry.
-        f"git fetch origin {base_commit} || {{ git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'; git fetch origin; git fetch origin {base_commit}; }}",
+        f"for i in 1 2 3; do git fetch origin {base_commit} && break; git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'; git fetch origin 2>/dev/null || true; sleep 5; done",
         f"git reset --hard {base_commit}",
         "git remote remove origin",
         "source /opt/miniconda3/bin/activate",
@@ -1832,7 +1833,9 @@ def make_test_spec(instance: SWEfficiencyInstance, observed_versions=None) -> Te
     )
     if instance["repo"] == "pandas-dev/pandas":
         raw_st = instance.get("single_thread_tests", [])
-        if raw_st:
+        # ``raw_st`` may be a numpy array (from parquet), whose truth value
+        # is ambiguous when it has >1 element — must test length, not truthiness.
+        if hasattr(raw_st, '__len__') and len(raw_st) > 0:
             single_thread_tests = [
                 t for t in raw_st
                 if not t.endswith(_NETWORK_DB_TEST_PATTERNS)
