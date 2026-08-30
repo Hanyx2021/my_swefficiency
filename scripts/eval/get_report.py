@@ -115,17 +115,34 @@ def evaluate_instance(
             (pred_run / instance_id / "covering_test_status.json").read_text()
         )
 
-    passed_tests = []
-    failed_tests = []
-    for test in pass_to_pass:
-        if "PASS" in pred_statuses.get(test, ""):
-            passed_tests.append(test)
-        else:
-            failed_tests.append(test)
+    gold_status_file = gold_run / instance_id / "covering_test_status.json"
+    if gold_status_file.exists():
+        gold_statuses = json.loads(gold_status_file.read_text())
+        gold_executed = set(gold_statuses)
+        gold_failures = {
+            t
+            for t, s in gold_statuses.items()
+            if "PASS" not in s and "SKIP" not in s
+        }
+    else:
+        gold_executed = None
+        gold_failures = set()
 
-    passed_tests = set(passed_tests)
+    pass_to_pass_filtered = [
+        t
+        for t in pass_to_pass
+        if t not in gold_failures and (gold_executed is None or t in gold_executed)
+    ]
+    p2p_in_status = [t for t in pass_to_pass_filtered if t in pred_statuses]
+    passed_tests = {
+        t
+        for t in p2p_in_status
+        if "PASS" in pred_statuses[t] or "SKIP" in pred_statuses[t]
+    }
 
-    correctness_pct = len(passed_tests) / len(pass_to_pass) if pass_to_pass else 1.0
+    correctness_pct = (
+        len(passed_tests) / len(p2p_in_status) if p2p_in_status else 1.0
+    )
     if correctness_pct < 1.0:
         # print(
         #     f"Instance {instance_id} failed {len(pass_to_pass) - len(passed_tests)} out of {len(pass_to_pass)} pass-to-pass tests.",

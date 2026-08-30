@@ -3539,6 +3539,36 @@ SPECS_NUMPY = {}
 TEST_NUMPY = TEST_PYTEST
 TEST_NUMPY_DISTRIBUTED = TEST_PYTEST_DISTRIBUTED
 
+# Robust `git submodule update --init` for the numpy/scipy pre-install steps.
+# The setup_repo.sh is generated from these pre_install lists and runs with
+# `set -exo pipefail`; a submodule fetch that drops mid-stream (e.g. ghfast.top
+# mirror: "RPC failed; curl 56 ... early EOF") previously failed the entire
+# image build with exit 128.  Retry through the mirror first, then unset the
+# URL rewrite and fall back to direct github.com.  Kept identical to the plain
+# `git submodule update --init` on the happy path so already-building images are
+# unaffected; only adds resilience for the retry/fallback cases.
+_SUBMODULE_INIT_RETRY = """\
+for _sm_i in 1 2 3 4 5; do
+  if git submodule update --init; then _sm_ok=yes; echo "Submodules fetched via mirror (attempt ${_sm_i})"; break; fi
+  echo "submodule fetch attempt ${_sm_i} failed; cleaning partial state and retrying"
+  git submodule deinit -f --all 2>/dev/null || true
+  sleep 15
+done
+if [ "${_sm_ok}" != yes ]; then
+  echo "ghfast.top submodule fetch failed after 5 attempts; falling back to direct github.com"
+  git config --global --unset-all url.https://ghfast.top/https://github.com/.insteadOf || true
+  for _sm_i in 1 2 3; do
+    if git submodule update --init; then _sm_ok=yes; echo "Submodules fetched via direct github (attempt ${_sm_i})"; break; fi
+    echo "direct-github submodule attempt ${_sm_i} failed"
+    git submodule deinit -f --all 2>/dev/null || true
+    sleep 15
+  done
+fi
+if [ "${_sm_ok}" != yes ]; then
+  echo "FATAL: submodules could not be fetched via ghfast.top mirror or direct github.com"
+  exit 1
+fi"""
+
 for k in ["1.15", "1.16"]:
     SPECS_NUMPY[k] = {
         "python": "3.6",
@@ -3608,7 +3638,7 @@ for k in ["1.20", "1.21", "1.22", "1.23", "1.24"]:
         "pre_install": [
             "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev && rm -rf branding/",
             "cd /testbed && git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/ && git config --global http.version HTTP/1.1 && git submodule sync",
-            "git submodule update --init",
+            _SUBMODULE_INIT_RETRY,
             "pip install 'setuptools>=48,<60'",
         ],
         "install": "rm -rf build/ dist/ *.egg-info/\n\npython setup.py build_ext --inplace\n\npip install --no-build-isolation --no-deps .\n\npython -c \"import numpy; print('NumPy version:', numpy.__version__); print('Config OK')\"",
@@ -3630,7 +3660,7 @@ for k in ["1.25"]:
         "pre_install": [
             "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev && rm -rf branding/",
             "cd /testbed && git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/ && git config --global http.version HTTP/1.1 && git submodule sync",
-            "git submodule update --init",
+            _SUBMODULE_INIT_RETRY,
         ],
         "install": "rm -rf build/ dist/ *.egg-info/ && pip install --no-build-isolation --editable . && sed -i 's/raise ImportError(msg) from e/# raise ImportError(msg) from e/' /testbed/numpy/__init__.py",
         "test_cmd": TEST_NUMPY,
@@ -3648,7 +3678,7 @@ for k in ["1.26"]:
         "pre_install": [
             "apt-get -y update && apt-get -y upgrade && apt-get install -y libopenblas-dev && rm -rf branding/",
             "cd /testbed && git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/ && git config --global http.version HTTP/1.1 && git submodule sync",
-            "git submodule update --init",
+            _SUBMODULE_INIT_RETRY,
         ],
         "install": "rm -rf build/ dist/ *.egg-info/ && pip install --no-build-isolation --editable . && sed -i 's/raise ImportError(msg) from e/# raise ImportError(msg) from e/' /testbed/numpy/__init__.py",
         "test_cmd": TEST_NUMPY,
@@ -3668,7 +3698,7 @@ for k in ["2.0", "2.1", "2.2"]:
             "git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/",
             "git config --global http.version HTTP/1.1",
             "cd /testbed && git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/ && git config --global http.version HTTP/1.1 && git submodule sync",
-            "git submodule update --init",
+            _SUBMODULE_INIT_RETRY,
             "python -m ensurepip --upgrade",
             "pip install --upgrade setuptools",
         ],
@@ -3727,7 +3757,7 @@ for k in ["1.0", "1.1"]:
         "pre_install": [
             "apt-get -y update && apt-get install -y libopenblas-dev",
             "cd /testbed && git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/ && git config --global http.version HTTP/1.1 && git submodule sync",
-            "git submodule update --init",
+            _SUBMODULE_INIT_RETRY,
             SCIPY_FLAGS,
         ],
         "install": f"pip install --no-build-isolation -e . --no-use-pep517",
@@ -3752,7 +3782,7 @@ for k in ["1.2"]:
         "pre_install": [
             "apt-get -y update && apt-get install -y libopenblas-dev",
             "cd /testbed && git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/ && git config --global http.version HTTP/1.1 && git submodule sync",
-            "git submodule update --init",
+            _SUBMODULE_INIT_RETRY,
             SCIPY_FLAGS,
         ],
         "install": f"pip install --no-build-isolation -e . --no-use-pep517",
@@ -3778,7 +3808,7 @@ for k in ["1.3", "1.4", "1.5"]:
         "pre_install": [
             "apt-get -y update && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev libc6-dev",
             "git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/",
-                        "git submodule update --init",
+                        _SUBMODULE_INIT_RETRY,
             SCIPY_FLAGS,
         ],
         "install": f"pip install --no-build-isolation -e .",
@@ -3808,7 +3838,7 @@ for k in ["1.6"]:
         "pre_install": [
             "apt-get -y update && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev libc6-dev",
             "git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/",
-                        "git submodule update --init",
+                        _SUBMODULE_INIT_RETRY,
             SCIPY_FLAGS,
         ],
         "install": f"pip install --no-build-isolation -e .",
@@ -3841,7 +3871,7 @@ for k in ["1.7"]:
         "pre_install": [
             "apt-get -y update && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev libc6-dev",
             "cd /testbed && git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/ && git config --global http.version HTTP/1.1 && git submodule sync",
-            "git submodule update --init",
+            _SUBMODULE_INIT_RETRY,
             SCIPY_FLAGS,
         ],
         "install": f"pip install --no-build-isolation -e .",
@@ -3874,7 +3904,7 @@ for k in ["1.8"]:
         "pre_install": [
             "apt-get -y update && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev patchelf libc6-dev",
             "cd /testbed && git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/ && git config --global http.version HTTP/1.1 && git submodule sync",
-            "git submodule update --init",
+            _SUBMODULE_INIT_RETRY,
             SCIPY_FLAGS,
         ],
         "install": f"pip install --no-build-isolation -e .",
@@ -3907,7 +3937,7 @@ for k in ["1.9"]:
         "pre_install": [
             "apt-get -y update && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev patchelf libc6-dev",
             "git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/",
-                        "git submodule update --init",
+                        _SUBMODULE_INIT_RETRY,
             SCIPY_FLAGS,
         ],
         "install": f"pip install --no-build-isolation -e .",
@@ -3941,7 +3971,7 @@ for k in ["1.10", "1.11"]:
         "pre_install": [
             "apt-get -y update && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev libc6-dev",
             "git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/",
-                        "git submodule update --init",
+                        _SUBMODULE_INIT_RETRY,
             SCIPY_FLAGS,
         ],
         "install": f"pip install --no-build-isolation -e .",
@@ -3971,7 +4001,7 @@ for k in ["1.12", "1.13"]:
         "pre_install": [
             "apt-get -y update && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev libc6-dev",
             "git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/",
-                        "git submodule update --init",
+                        _SUBMODULE_INIT_RETRY,
             SCIPY_FLAGS,
         ],
         "install": f"pip install --no-build-isolation -e .",
@@ -4002,7 +4032,7 @@ for k in ["1.14", "1.15"]:
         "pre_install": [
             "apt-get -y update && apt-get install -y libopenblas-dev liblapack-dev libopenblas-dev libsuitesparse-dev libc6-dev",
             "git config --global url.https://ghfast.top/https://github.com/.insteadOf https://github.com/",
-                        "git submodule update --init",
+                        _SUBMODULE_INIT_RETRY,
             SCIPY_FLAGS,
         ],
         "install": f"pip install --no-build-isolation -e .",
