@@ -497,6 +497,27 @@ def make_repo_script_list(
         for pre_install in specs["pre_install"]:
             setup_commands.append(pre_install)
 
+    # scipy checkouts from the 1.10.0.dev0 era (e.g. base_commit bd608529) ship
+    # ``scipy/_build_utils/cythoner.py`` with a bare ``#!python3`` shebang.  The
+    # kernel resolves a *relative* interpreter against the cwd of the exec'ing
+    # process, and meson/ninja runs that helper with cwd set to the build
+    # directory, where no ``python3`` exists: every ``.pyx`` -> ``.c`` step dies
+    # with ``/bin/sh: 1: .../cythoner.py: not found`` (exit 127) and
+    # ``pip install --no-build-isolation -e .`` aborts while "Preparing
+    # metadata", so the instance image can never be built
+    # (scipy__scipy-16599 / -16790 / -16840).  Rewrite only that shebang: the
+    # file-content check makes the command a no-op for every other checkout, and
+    # the 'Fix environment' commit below swallows the edit so that it can never
+    # surface in an agent's diff.
+    if repo == "scipy/scipy":
+        setup_commands.append(
+            "if [ -f /testbed/scipy/_build_utils/cythoner.py ] && "
+            "head -1 /testbed/scipy/_build_utils/cythoner.py | grep -qx '#!python3'; then "
+            "sed -i '1s|^#!python3$|#!/usr/bin/env python3|' "
+            "/testbed/scipy/_build_utils/cythoner.py && "
+            "chmod +x /testbed/scipy/_build_utils/cythoner.py; fi"
+        )
+
     if "install" in specs:
         setup_commands.append(specs["install"])
 
