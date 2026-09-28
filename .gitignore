@@ -187,4 +187,10 @@ predictions/lite_openhands
 predictions/openhands
 predictions/sweagent
 
+# ``logs/`` above only matches a directory: here it is a symlink onto NFS (git
+# sees a file), so name it without the slash.  Everything under it is run output.
+logs
+logs/build_images
+logs/run_evaluation
+
 analysis/adhoc/patch_analysis/interesting_patches

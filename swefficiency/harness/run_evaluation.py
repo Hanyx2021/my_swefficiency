@@ -48,6 +48,10 @@ from swefficiency.harness.docker_utils import (
     should_remove,
 )
 from swefficiency.harness.grading import get_eval_report
+from swefficiency.harness.image_stream import (
+    ensure_env_local,
+    release_env_for_instance,
+)
 from swefficiency.harness.test_spec import (
     PERF_WORKLOAD_SCRIPT_LOCATION,
     TestSpec,
@@ -122,6 +126,10 @@ def run_instance(
     # Run the instance
     container = None
     try:
+        # The instance image is built FROM this env, so it has to be in the
+        # local store first.  Same lazy NFS -> local move the infer side does;
+        # no-op when the env is already local or streaming is disabled.
+        ensure_env_local(client, instance_id, test_spec.env_image_key)
         # Build + start instance container (instance image should already be built)
         container = build_container(
             test_spec, client, run_id, logger, rm_image, force_rebuild
@@ -321,6 +329,11 @@ def run_instance(
         cleanup_container(client, container, logger)
         if rm_image:
             remove_image(client, test_spec.instance_image_key, logger)
+        # Give back the env image this instance was streamed in from, once no
+        # remaining instance needs it (NFS keeps the authoritative copy), so a
+        # finished run does not leave a whole dataset's envs in the scratch
+        # store.  No-op unless SWEFFICIENCY_ENV_EVICT=1 + streaming is on.
+        release_env_for_instance(instance_id, client)
         close_logger(logger)
     return
 

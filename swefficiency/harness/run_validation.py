@@ -65,6 +65,11 @@ from swefficiency.harness.docker_utils import (
     should_remove,
 )
 from swefficiency.harness.grading import get_logs_eval
+from swefficiency.harness.image_stream import (
+    ensure_env_local,
+    evict_enabled,
+    release_env_for_instance,
+)
 from swefficiency.harness.log_parsers import MAP_REPO_TO_PARSER
 from swefficiency.harness.run_to_run_isolation import transform_to_isolated_workload
 from swefficiency.harness.test_spec import (
@@ -328,6 +333,12 @@ def run_instance(
             )
             container.start()
         else:
+            # The instance image is built FROM this env, so it has to be in the
+            # local store first.  Streaming it here (rather than pre-loading the
+            # whole dataset's envs) is what the infer side does too: no-op when
+            # the env is already local, otherwise the env is moved NFS -> local
+            # on demand and released again once its last user finishes.
+            ensure_env_local(client, instance_id, test_spec.env_image_key)
             container = build_container(
                 test_spec, client, run_id, logger, rm_image, force_rebuild, cpu_groups
             )
@@ -543,7 +554,13 @@ def run_instance(
 
                 # Copy large dataset files from local cache into the container.
                 if instance_id == "scikit-learn__scikit-learn-24856":
-                    higgs_local = Path("/home/hyx/swefficiency/dataset/HIGGS.csv.gz")
+                    higgs_local = Path(
+                        os.environ.get(
+                            "SWEFFICIENCY_HIGGS_DATASET",
+                            # $HOME-relative, not the reference box's literal.
+                            os.path.expanduser("~/swefficiency/dataset/HIGGS.csv.gz"),
+                        )
+                    )
                     if higgs_local.exists():
                         logger.info(f"Copying {higgs_local} to container /tmp/HIGGS.csv.gz ...")
                         copy_to_container(container, higgs_local, Path("/tmp/HIGGS.csv.gz"))
@@ -1060,6 +1077,11 @@ def run_instance(
                 image_key = dockerhub_image_key
 
             remove_image(client, image_key, logger)
+        # Give back the env image this instance was streamed in from, once no
+        # remaining instance needs it (NFS keeps the authoritative copy), so a
+        # finished run does not leave a whole dataset's envs in the scratch
+        # store.  No-op unless SWEFFICIENCY_ENV_EVICT=1 + streaming is on.
+        release_env_for_instance(instance_id, client)
         close_logger(logger)
     return instance_id, instance_report
 
@@ -1122,6 +1144,16 @@ def run_instances(
             continue
 
     instances = working_instances
+
+    if evict_enabled():
+        # Group the queue by env image.  main() shuffles the dataset for load
+        # balancing, which scatters the (usually 1-4) instances that share an env
+        # across the whole queue -- with lazy NFS streaming + eviction that turns
+        # 181 env transfers into ~400, because an env gets re-streamed every time
+        # it comes back around.  Sorting here means each env is streamed once,
+        # used by its whole group, and evicted when the group finishes.  Only
+        # active in the split-store streaming setup (see image_stream).
+        test_specs.sort(key=lambda s: s.env_image_key)
 
     # print number of existing instance images
     instance_image_ids = {x.instance_image_key for x in test_specs}

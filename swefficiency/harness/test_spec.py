@@ -240,6 +240,99 @@ def get_test_specs_from_dataset(
     return test_specs
 
 
+# ---------------------------------------------------------------------------
+# github.com mirror rotation
+# ---------------------------------------------------------------------------
+# Ordered mirror prefixes; each is prepended verbatim to "<owner>/<repo>", so
+# both prefix styles work:
+#     https://hk.gh-proxy.com/https://github.com/   (proxy style)
+#     https://gitclone.com/github.com/              (gitclone style)
+# Measured from this network on 2026-09-15 (real `git clone --single-branch` of
+# pandas-dev/pandas, the heaviest repo in the suite, ~457MB):
+#     gh-proxy.com     43s  ok, 38993 commits, base_commit + tags fetchable
+#     ghproxy.net     300s+ stalls; fine for small repos (pytest 140s), not pandas
+#     hk.gh-proxy.com 300s+ hangs after "redirecting to hk.gh-proxy.org/https:/
+#                     github.com/..." (note the mangled single slash) or 503
+#     gitclone.com    151s *exit 0* but degenerate: 1 commit, 0 tags, and the
+#                     requested base_commit simply absent -- the rotation used to
+#                     accept that clone and die later at `git reset --hard`
+#     ghfast.top      dead since 2026-08 (403)
+#     github.com      blocked (TCP connect times out after ~135s)
+# Mirror health rotates on a scale of hours, so the list is ordered but never
+# trusted: a clone only counts once base_commit is checked out (see the rotation
+# below).  Override with SWEFFICIENCY_GITHUB_MIRRORS="<p1> <p2> ..." (space or
+# comma separated).  The legacy single-value SWEFFICIENCY_GITHUB_MIRROR is still
+# honoured as the primary mirror.  ROUNDS / TIMEOUT / BUDGET tune the rotation.
+_DEFAULT_GITHUB_MIRRORS = [
+    "https://gh-proxy.com/https://github.com/",
+    "https://ghproxy.net/https://github.com/",
+    "https://hk.gh-proxy.com/https://github.com/",
+    "https://gitclone.com/github.com/",
+]
+_LEGACY_MIRROR = "https://ghfast.top/https://github.com/"
+
+
+def get_github_mirrors() -> list[str]:
+    """Ordered github.com mirror prefixes; entry 0 is the preferred mirror."""
+    raw = os.environ.get("SWEFFICIENCY_GITHUB_MIRRORS", "").strip()
+    if not raw:
+        # Back-compat: the old single-value variable names the primary mirror.
+        raw = os.environ.get("SWEFFICIENCY_GITHUB_MIRROR", "").strip()
+    mirrors = [p.strip() for p in re.split(r"[,\s]+", raw) if p.strip()]
+    if not mirrors:
+        mirrors = list(_DEFAULT_GITHUB_MIRRORS)
+    # Tolerate prefixes written without a trailing slash.
+    return [m if m.endswith("/") else m + "/" for m in mirrors]
+
+
+def _env_nonneg_int(name: str, default: int) -> int:
+    """int(os.environ[name]) when it is a non-negative int, else *default*."""
+    try:
+        value = int(str(os.environ.get(name, "")).strip())
+    except (TypeError, ValueError):
+        return default
+    return value if value >= 0 else default
+
+
+# Width of the maths-library thread pools during the correctness run.  1 makes
+# the run deterministic; 0 leaves the environment alone (pre-2026-09-16
+# behaviour, threads = nproc).
+_DEFAULT_CORRECTNESS_NUM_THREADS = 1
+
+# Honoured by the OpenMP runtime, NumPy/OpenBLAS, MKL and numexpr respectively.
+_THREAD_ENV_VARS = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+)
+
+
+def get_correctness_thread_env() -> str:
+    """Shell env-assignment prefix that pins the maths thread pools, or "".
+
+    The correctness script already parallelises across test *files* (``xargs
+    -P``); letting every pytest process fan out to all cores on top of that
+    only oversubscribes the machine, and it makes the run non-reproducible.
+    Several suites assert on *exact* floating-point convergence, and parallel
+    BLAS/OpenMP reductions accumulate in a thread-count-dependent order, so a
+    256-core host can fail a test that a small host passes.  scikit-learn's
+    ``test_kmeans_convergence`` is one: the KMeans E-step is an OpenMP
+    ``prange`` reduction over ``n_samples // 256`` chunks, and the test asserts
+    ``n_iter_ < max_iter`` with ``tol=0`` -- i.e. the centre shift must hit
+    *exactly* 0.0.  That happens with 1 thread and never with 256.
+
+    Override with ``SWEFFICIENCY_CORRECTNESS_NUM_THREADS`` (0 disables the
+    pinning entirely).
+    """
+    n_threads = _env_nonneg_int(
+        "SWEFFICIENCY_CORRECTNESS_NUM_THREADS", _DEFAULT_CORRECTNESS_NUM_THREADS
+    )
+    if n_threads == 0:
+        return ""
+    return " ".join(f"{var}={n_threads}" for var in _THREAD_ENV_VARS) + " "
+
+
 def make_repo_script_list(
     specs, repo, repo_directory, base_commit, env_name, treesitter_env_name=None
 ):
@@ -247,23 +340,151 @@ def make_repo_script_list(
     Create a list of bash commands to set up the repository for testing.
     This is the setup script for the instance image.
     """
+    # Clone via an ordered mirror list: github.com is unreachable from this
+    # network and single mirrors rot (ghfast.top died 2026-08, gh-proxy.com died
+    # 2026-09-15).  One full pass over the list is one "round"; first success wins.
+    _clone_mirrors = get_github_mirrors()
+    _clone_primary = _clone_mirrors[0]
+    _clone_rounds = max(1, _env_nonneg_int("SWEFFICIENCY_GITHUB_MIRROR_ROUNDS", 2))
+    _attempt_timeout = _env_nonneg_int("SWEFFICIENCY_GITHUB_MIRROR_TIMEOUT", 600)
+    # scikit-learn's build is capped at 600s (BUILD_TIMEOUT_CONFIGS_OVERRIDES),
+    # so the clone phase must never eat the whole build timeout.
+    _build_timeout = BUILD_TIMEOUT_CONFIGS_OVERRIDES.get(repo)
+    _clone_budget = _env_nonneg_int(
+        "SWEFFICIENCY_GITHUB_MIRROR_BUDGET",
+        (_build_timeout // 2) if _build_timeout else 1800,
+    )
+    # Post-clone fetches (--tags, base_commit) sit *outside* the clone rotation,
+    # so a mirror that accepts the clone and then stalls on the follow-up fetch
+    # is never killed.  Production hit exactly that on 2026-09-15: a
+    # `git fetch origin --tags` still alive after 3h24m.  0 disables the wrapper.
+    _fetch_timeout = _env_nonneg_int("SWEFFICIENCY_GITHUB_FETCH_TIMEOUT", 600)
+    # Bash reference to the mirror that actually served the clone.  Repo specs
+    # hardcode a *single* mirror prefix for `git remote add upstream`, submodule
+    # url.<base>.insteadOf and wget; rewriting those to this variable means a
+    # dead *primary* mirror can no longer poison a build whose clone already
+    # succeeded on a secondary one -- the exact failure mode seen on 2026-09-15
+    # (hk.gh-proxy.com returning 503 while ghproxy.net served fine).  Quoted so
+    # it drops into `url.<ref>.insteadOf`, `git remote add` and `wget` alike.
+    _mirror_ref = '"${_SWEFF_MIRROR_USED}"'
+    _rounds_literal = " ".join(str(i) for i in range(1, _clone_rounds + 1))
     setup_commands = [
         "git config --global http.lowSpeedLimit 0",
         "git config --global http.postBuffer 524288000",
-        # Retry ghfast.top 3×, then fall back to github.com directly
-        f"for i in 1 2 3; do git clone --single-branch -o origin https://ghfast.top/https://github.com/{repo} {repo_directory} && break; sleep 10; done; [ -d {repo_directory}/.git ] || git clone --single-branch -o origin https://github.com/{repo} {repo_directory} || git clone --single-branch -o origin https://ghfast.top/https://github.com/{repo} {repo_directory}",
+        # github.com is unreachable and single mirrors rot, so rotate over an
+        # ordered mirror list; one pass over the list is one round.
+        # NOTE: setup_repo.sh runs under `set -exo pipefail`, so every command
+        # that may fail is kept in an `if` condition (which is exempt from -e).
+        f"export _SWEFF_MIRRORS='{' '.join(_clone_mirrors)}'",
+        # Mirror the clone ends up using.  Defaults to the primary so that any
+        # command emitted *before* the loop still gets a well-formed URL; the
+        # success branch below overwrites it with the mirror that really worked.
+        # Exported so nested shells (submodule, pip) inherit it.
+        '_SWEFF_MIRROR_USED="${_SWEFF_MIRRORS%% *}"',
+        "export _SWEFF_MIRROR_USED",
+        f"_SWEFF_ROUNDS={_clone_rounds}",
+        f"_SWEFF_ATTEMPT_TIMEOUT={_attempt_timeout}",
+        f"_SWEFF_BUDGET={_clone_budget}",
+        "_SWEFF_OK=''",
+        "# timeout(1) is coreutils and present in ubuntu:22.04; probe anyway so a",
+        "# missing binary degrades to an untimed clone instead of a 127 per attempt.",
+        "_SWEFF_TIMEOUT_BIN=''",
+        "if command -v timeout >/dev/null 2>&1; then _SWEFF_TIMEOUT_BIN=timeout; fi",
+        "_SWEFF_STARTED=$(date +%s 2>/dev/null || echo 0)",
+        'if [ -z "$_SWEFF_MIRRORS" ]; then',
+        '  echo "SWEFF: FATAL no github mirrors configured"',
+        "  exit 128",
+        "fi",
+        # /testbed is this RUN's cwd (inherited WORKDIR); leave it before removing
+        # it, otherwise getcwd() fails inside git.
+        "cd /",
+        f"for _SWEFF_R in {_rounds_literal}; do",
+        "  for _SWEFF_M in $_SWEFF_MIRRORS; do",
+        '    if [ "$_SWEFF_STARTED" -gt 0 ] && [ "$_SWEFF_BUDGET" -gt 0 ]; then',
+        "      _SWEFF_ELAPSED=$(( $(date +%s 2>/dev/null || echo 0) - _SWEFF_STARTED ))",
+        '      if [ "$_SWEFF_ELAPSED" -ge "$_SWEFF_BUDGET" ]; then',
+        '        echo "SWEFF: clone budget ${_SWEFF_BUDGET}s exhausted; giving up"',
+        "        break 2",
+        "      fi",
+        "    fi",
+        "# Assemble the wrapper as ONE word list: an empty expansion must vanish",
+        "# entirely (never leave the timeout value as a command name).",
+        '    _SWEFF_RUN=""',
+        '    if [ -n "$_SWEFF_TIMEOUT_BIN" ]; then _SWEFF_RUN="timeout $_SWEFF_ATTEMPT_TIMEOUT"; fi',
+        '    echo "SWEFF: clone attempt round=$_SWEFF_R/$_SWEFF_ROUNDS mirror=$_SWEFF_M"',
+        # A failed clone removes the directory it created, but a SIGKILLed one
+        # (timeout/oom) cannot, so wipe the target every attempt.  `|| true`: a
+        # failing rm must not abort the build; the clone then fails visibly with
+        # "not an empty directory" and rotates to the next mirror.
+        f"    rm -rf {repo_directory} || true",
+        f'    if $_SWEFF_RUN git clone --single-branch -o origin "${{_SWEFF_M}}{repo}" {repo_directory}; then',
+        # A mirror can hand back a *degenerate* clone and still exit 0.  Measured
+        # on 2026-09-15: gitclone.com returned rc=0 in 151s for pandas with
+        # commits=1, tags=0 and base_commit absent -- the rotation then declared
+        # success, and the build died much later at `git reset --hard` with
+        # `exit status 128` while `git fetch origin --tags` on that stub hung for
+        # 3h24m.  So a clone is only "OK" once the commit we actually need is
+        # reachable; otherwise this mirror is a failure and we rotate on.
+        # `git -C` rather than cd keeps every command off the error path of a
+        # failing cwd change under `set -e`.
+        f"      for _SWEFF_T in 1 2 3; do $_SWEFF_RUN git -C {repo_directory} fetch origin {base_commit} 2>/dev/null && break; git -C {repo_directory} config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*' 2>/dev/null || true; $_SWEFF_RUN git -C {repo_directory} fetch origin 2>/dev/null || true; sleep 5; done",
+        # Verify by performing the operation the build actually needs.  A commit
+        # object can exist in a stunted clone while its tree/blobs do not, so
+        # `cat-file -e` is not enough; a successful `reset --hard` proves the
+        # whole path is present, and it is the exact step that used to fail with
+        # `exit status 128` after a bogus "clone OK".
+        f"      if git -C {repo_directory} reset --hard {base_commit} 2>/dev/null; then",
+        "        _SWEFF_OK=yes",
+        '        _SWEFF_MIRROR_USED="$_SWEFF_M"',
+        '        echo "SWEFF: clone OK via $_SWEFF_M (base_commit checked out)"',
+        "        break 2",
+        "      fi",
+        f'      echo "SWEFF: mirror $_SWEFF_M cloned but {base_commit} is not usable (degenerate clone); trying next"',
+        "    else",
+        '      echo "SWEFF: mirror $_SWEFF_M failed; trying next"',
+        "    fi",
+        "    sleep 5",
+        "  done",
+        "  sleep 15",
+        "done",
+        'if [ -z "$_SWEFF_OK" ]; then',
+        f'  echo "SWEFF: FATAL could not clone {repo} from any of: $_SWEFF_MIRRORS"',
+        "  exit 128",
+        "fi",
         f"chmod -R 777 {repo_directory}",
         f"cd {repo_directory}",
-        "git fetch origin --tags 2>/dev/null || true",
-        # --single-branch clones only have the default branch. If base_commit
-        # is on another branch (or unreachable), broaden the fetch and retry.
-        f"for i in 1 2 3; do git fetch origin {base_commit} && break; git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'; git fetch origin 2>/dev/null || true; sleep 5; done",
-        f"git reset --hard {base_commit}",
+        # `chmod -R 777` above rewrites the mode bits of every file in the
+        # tree, so without this git reports the whole repo as modified
+        # (`mode change 100644 => 100755`).  Those hunks then leak into every
+        # later `git diff <base_commit>`: for scipy the runtime patch capture
+        # produced a ~175 KB "patch" of nothing but mode changes, which blew
+        # past the single-argument limit of the remote-write helper and
+        # aborted the baseline correctness check (__INTROSPECTION_GUARD_FAILED__).
+        # core.fileMode lives in .git/config, so it persists into the image and
+        # also covers diffs taken at runtime.  Content changes are still
+        # detected and still committed by the 'Fix environment' step below.
+        "git config core.fileMode false",
+        # Same one-word-list trick as _SWEFF_RUN above, but for the post-clone
+        # fetches: an empty expansion must vanish rather than leave `600` as the
+        # command name.  A mirror that stalls here used to hang the build for
+        # hours because only the clone itself was wrapped in `timeout`.
+        f"_SWEFF_FETCH_TIMEOUT={_fetch_timeout}",
+        '_SWEFF_FETCH_RUN=""',
+        'if [ -n "$_SWEFF_TIMEOUT_BIN" ] && [ "$_SWEFF_FETCH_TIMEOUT" -gt 0 ]; then'
+        ' _SWEFF_FETCH_RUN="timeout $_SWEFF_FETCH_TIMEOUT"; fi',
+        "$_SWEFF_FETCH_RUN git fetch origin --tags 2>/dev/null || true",
+        # base_commit was already fetched and checked out inside the rotation
+        # loop -- that is what makes a mirror's clone count as successful.
         "git remote remove origin",
         "source /opt/miniconda3/bin/activate",
         f"conda activate {env_name}",
         'echo "Current environment: $CONDA_DEFAULT_ENV"',
     ]
+    # Everything above is the clone/fetch preamble, whose `origin` URLs are
+    # already mirror-correct.  The legacy-literal rewrite below must not touch
+    # it: it would rewrite the mirror list itself if a legacy prefix ever
+    # reappeared inside _SWEFF_MIRRORS.
+    _preamble_len = len(setup_commands)
 
     if repo in MAP_REPO_TO_INSTALL:
         setup_commands.append(MAP_REPO_TO_INSTALL[repo])
@@ -313,6 +534,46 @@ def make_repo_script_list(
     setup_commands.append(
         "git -c user.name='Automated Test' -c user.email='automated@test.com' commit -a -m 'Fix environment' || true"
     )
+
+    # Normalise legacy hardcoded mirror literals.  MAP_REPO_TO_INSTALL /
+    # specs["pre_install"] carry upstream-remote, submodule url.<base>.insteadOf
+    # and wget literals that hardcode the once-default mirror prefix
+    # (``https://ghfast.top/...``).  Those are appended verbatim above and bypass
+    # the rotation list, so when ghfast.top 403s (dead since 2026-08) the build
+    # dies at e.g. pandas' ``git fetch upstream --tags``.
+    #
+    # These sites are single-valued by nature (git config insteadOf, wget) and
+    # cannot rotate, so they all point at $_SWEFF_MIRROR_USED -- the mirror that
+    # actually served the clone, which may be any entry of the list.  Pointing
+    # them at a fixed "primary" is what broke on 2026-09-15: a clone that
+    # succeeded via ghproxy.net was then killed by `git fetch upstream --tags`
+    # against a 503-ing hk.gh-proxy.com.
+    #
+    # The set/unset pairs inside _SUBMODULE_INIT_RETRY use the same literal, so a
+    # blanket replace keeps them consistent.  No-op for a pure-legacy config.
+    if _clone_primary != _LEGACY_MIRROR:
+        _legacy_quoted = "'" + _LEGACY_MIRROR + "'"
+        rewritten = []
+        for cmd in setup_commands[_preamble_len:]:
+            # Single-quoted sites (astropy's ``url.'<mirror>'.insteadOf``) would
+            # keep a bare ${...} reference literal, so handle the quoted form
+            # first: after this it is a double-quoted reference, which the second
+            # replace below no longer matches.
+            cmd = cmd.replace(_legacy_quoted, _mirror_ref)
+            if cmd.strip() == "git fetch upstream --tags":
+                # pandas' pre_install.  The only *unguarded* post-clone fetch in
+                # the repo specs (its `--unshallow` sibling on the next line is
+                # already `|| true`), and redundant with the rotation's own
+                # `git fetch origin --tags` against the same mirror.  Unguarded
+                # it turns one flaky mirror response into `exit status 128` that
+                # throws away a perfectly good clone.
+                cmd = (
+                    f"$_SWEFF_FETCH_RUN {cmd}"
+                    " || echo 'SWEFF: WARN upstream --tags fetch failed;"
+                    " origin already supplied tags, continuing'"
+                )
+            rewritten.append(cmd.replace(_LEGACY_MIRROR, _mirror_ref))
+        setup_commands = setup_commands[:_preamble_len] + rewritten
     return setup_commands
 
 
@@ -1384,7 +1645,13 @@ def make_performance_script_list(
             "    HIGGS_PATH=/tmp/HIGGS.csv.gz",
             "    if [ ! -s \"$HIGGS_PATH\" ] || ! gzip -t \"$HIGGS_PATH\" 2>/dev/null; then",
             "        echo 'FATAL: HIGGS.csv.gz not found or corrupted at $HIGGS_PATH.'",
-            "        echo 'Please place the file at /home/hyx/swefficiency/dataset/HIGGS.csv.gz on the host.'",
+            f"        echo 'Please place the file at "
+            + os.environ.get(
+                "SWEFFICIENCY_HIGGS_DATASET",
+                # $HOME-relative, not the reference box's literal.
+                os.path.expanduser("~/swefficiency/dataset/HIGGS.csv.gz"),
+            )
+            + " on the host.'",
             "        exit 1",
             "    else",
             "        echo 'HIGGS.csv.gz found and valid.'",
@@ -1511,6 +1778,11 @@ def get_correctness_script_list(
 
     NUM_RETRY = 2
 
+    # Pin the maths thread pools so the run does not depend on the host's core
+    # count (see get_correctness_thread_env).  The prefix must stay free of
+    # single quotes: it is embedded in the single-quoted `bash -c '...'` below.
+    thread_env = get_correctness_thread_env()
+
     correctness_command = (
         f"{{ cat {DEFAULT_COVERING_TESTS_LOCATION} | "
         f"grep -vFx -f {DEFAULT_SINGLE_THREAD_COVERING_TESTS_LOCATION} || true; }} | "
@@ -1528,7 +1800,7 @@ def get_correctness_script_list(
         f"retries=0; rc=0; "
         f"while true; do "
         # capture both stdout+stderr; write to file; print nothing to terminal
-        f'{test_command} {test_directive_symbol} | tee "$outfile" > /dev/null; '
+        f'{thread_env}{test_command} {test_directive_symbol} | tee "$outfile" > /dev/null; '
         f"rc=${{PIPESTATUS[0]}}; "
         f'if [ "$rc" -le 1 ]; then break; fi; '
         f'if [ "$retries" -ge {NUM_RETRY} ]; then break; fi; '
@@ -1574,7 +1846,7 @@ def get_correctness_script_list(
         f'echo "[$(date)] Processing [$((idx + NUM_PARALLEL_TESTS))]: $line" >&2; '
         f"retries=0; rc=0; "
         f"while true; do "
-        f'PYTHONHASHSEED=0 {test_command} {test_directive_symbol} | tee "$outfile" > /dev/null; '
+        f'PYTHONHASHSEED=0 {thread_env}{test_command} {test_directive_symbol} | tee "$outfile" > /dev/null; '
         f"rc=${{PIPESTATUS[0]}}; "
         f'if [ "$rc" -le 1 ]; then break; fi; '
         f'if [ "$retries" -ge {NUM_RETRY} ]; then break; fi; '

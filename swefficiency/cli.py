@@ -165,6 +165,7 @@ def report_command(args):
             pred_run=pred_run_path,
             output_dir=output_dir,
             num_workers=args.num_workers,
+            dataset_name=args.dataset,
         )
 
         print(f"\nCSV report: {csv_path}")
@@ -285,6 +286,18 @@ def main():
         type=int,
         default=4,
         help="Number of parallel workers for report generation (default: 4)",
+    )
+    # Report reads the dataset for each instance's gold patch / PASS_TO_PASS, so
+    # on an offline box it needs a local path here too -- the hardcoded HF name
+    # (swefficiency/swefficiency) is unreachable and would abort the report.
+    report_parser.add_argument(
+        "--dataset",
+        type=str,
+        default=DEFAULT_DATASET,
+        help=(
+            "Dataset to read gold patches from: a local .parquet dir, "
+            f".json/.jsonl, or a HuggingFace name (default: {DEFAULT_DATASET})"
+        ),
     )
 
     # Parse arguments

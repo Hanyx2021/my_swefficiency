@@ -216,7 +216,74 @@ def has_attribute_or_import_error(log_before):
     return False
 
 
-ENV_YML_CACHE_DIR = Path("/home/hyx/swefficiency/cache/environment_yml")
+ENV_YML_CACHE_DIR = Path(
+    os.environ.get(
+        "SWEFFICIENCY_ENV_YML_CACHE_DIR",
+        "/home/Yuxuan_Han/swefficiency/cache/environment_yml",
+    )
+)
+
+
+# raw.githubusercontent.com 在本机是**不稳定可达**的: 直连时通时断(表现为读超时),
+# 而 get_requirements_by_commit 原来既没有镜像轮换、也没有磁盘缓存, 一个读超时要重试
+# 10 次 × 300s ⇒ 单个文件最坏 ~50 分钟才抛 ValueError, 把整轮评测(含前置搬运)带走。
+# 这里统一改成"镜像前缀优先 + 短超时 + 磁盘缓存", 与 SWEFFICIENCY_GITHUB_MIRRORS 那套
+# 轮换是同一思路 —— 那个变量只管 image build 里的 git clone, 管不到这里的 raw 取文件。
+REQS_CACHE_DIR = Path(
+    os.environ.get(
+        "SWEFFICIENCY_REQS_CACHE_DIR",
+        "/home/Yuxuan_Han/swefficiency/cache/requirements",
+    )
+)
+
+# 镜像优先、直连垫底。两个镜像实测对同一 commit 返回 200 且内容与直连逐字节相同。
+_DEFAULT_RAW_MIRRORS = (
+    "https://gh-proxy.com/https://raw.githubusercontent.com/",
+    "https://ghproxy.net/https://raw.githubusercontent.com/",
+    SWE_BENCH_URL_RAW,
+)
+
+
+def _raw_url_bases() -> list[str]:
+    """按顺序返回 raw 取文件用的 URL 前缀(可用 SWEFFICIENCY_RAW_MIRRORS 覆盖, 空格分隔)。"""
+    raw = os.environ.get("SWEFFICIENCY_RAW_MIRRORS", "").split() or list(
+        _DEFAULT_RAW_MIRRORS
+    )
+    return [b if b.endswith("/") else b + "/" for b in raw]
+
+
+def get_raw_text(repo: str, commit: str, path: str, timeout: int = 30) -> str | None:
+    """取 `<repo>/<commit>/<path>` 的文本。命中磁盘缓存直接返回, 否则逐个前缀试。
+
+    返回 None 表示所有前缀都没拿到(等价于"这个路径不存在"), 由上层决定换下一个
+    路径还是抛 ValueError —— 与打补丁前的控制流一致。
+    """
+    cache_file = REQS_CACHE_DIR / (
+        f"{repo.replace('/', '_')}_{commit}_{path.replace('/', '_')}"
+    )
+    if cache_file.exists():
+        return cache_file.read_text(encoding="utf-8")
+
+    rel = f"{repo}/{commit}/{path}"
+    last = "no attempt"
+    for base in _raw_url_bases():
+        try:
+            resp = requests.get(base + rel, timeout=timeout)
+        except Exception as e:
+            last = f"{type(e).__name__}: {e}"
+            continue
+        if resp.status_code == 200:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cache_file.with_name(f"{cache_file.name}.tmp{os.getpid()}")
+            tmp.write_text(resp.text, encoding="utf-8")
+            os.replace(tmp, cache_file)
+            return resp.text
+        last = f"HTTP {resp.status_code}"
+        if resp.status_code == 404:
+            # 镜像只是转发同一个上游, 404 就是真没这个文件 ⇒ 换前缀没意义
+            return None
+    print(f"[RAW FETCH] 所有前缀都失败 {rel}: {last}")
+    return None
 
 
 @cache
@@ -232,33 +299,18 @@ def get_environment_yml_by_commit(repo: str, commit: str, env_name: str) -> str:
             reqs_text = cache_file.read_text(encoding="utf-8")
             break
     else:
-        # Cache miss: fetch from network
-        session = requests.Session()
-        retry = requests.adapters.Retry(
-            total=3,
-            backoff_factor=2,
-            status_forcelist=[500, 502, 503, 504, 408, 429]
-        )
-        adapter = requests.adapters.HTTPAdapter(max_retries=retry)
-        session.mount('http://', adapter)
-        session.mount('https://', adapter)
-
+        # Cache miss: fetch from network (镜像轮换 + 短超时, 见 get_raw_text)
         reqs_text = None
         for req_path in MAP_REPO_TO_ENV_YML_PATHS[repo]:
-            reqs_url = os.path.join(SWE_BENCH_URL_RAW, repo, commit, req_path)
-            try:
-                reqs = session.get(reqs_url, timeout=60)
-                if reqs.status_code == 200:
-                    reqs_text = reqs.text
-                    # Save to disk cache
-                    cache_key = f"{repo.replace('/', '_')}_{commit}_{req_path.replace('/', '_')}"
-                    cache_file = ENV_YML_CACHE_DIR / cache_key
+            reqs_text = get_raw_text(repo, commit, req_path, timeout=60)
+            if reqs_text is not None:
+                # 与 get_raw_text 自己的缓存并存: 老缓存文件继续被上面的循环命中
+                cache_key = f"{repo.replace('/', '_')}_{commit}_{req_path.replace('/', '_')}"
+                cache_file = ENV_YML_CACHE_DIR / cache_key
+                if not cache_file.exists():
                     cache_file.write_text(reqs_text, encoding="utf-8")
                     print(f"[ENV CACHE] Saved {req_path} for {repo}@{commit} to disk cache")
-                    break
-            except Exception as e:
-                print(f"[ENV CACHE] Failed to fetch {reqs_url}: {e}")
-                continue
+                break
 
         if reqs_text is None:
             raise ValueError(
@@ -350,28 +402,19 @@ def get_environment_yml(instance: SWEfficiencyInstance, env_name: str) -> str:
 
 @cache
 def get_requirements_by_commit(repo: str, commit: str) -> str:
-    # Configure retry session for network stability
-    session = requests.Session()
-    retry = requests.adapters.Retry(
-        total=10,
-        backoff_factor=2,
-        status_forcelist=[500, 502, 503, 504, 408, 429]
-    )
-    adapter = requests.adapters.HTTPAdapter(max_retries=retry)
-    session.mount('http://', adapter)
-    session.mount('https://', adapter)
-    
+    # 取文件统一走 get_raw_text(镜像优先 + 短超时 + 磁盘缓存); 原来直连
+    # Retry(total=10) × timeout=300, 一旦被墙就是最坏 ~50 分钟才失败。
+    lines = None
+    req_path = ""
     for req_path in MAP_REPO_TO_REQS_PATHS[repo]:
-        reqs_url = os.path.join(SWE_BENCH_URL_RAW, repo, commit, req_path)
-        reqs = session.get(reqs_url, timeout=300)  # Increased to 120 seconds
-        if reqs.status_code == 200:
+        lines = get_raw_text(repo, commit, req_path)
+        if lines is not None:
             break
-    else:
+    if lines is None:
         raise ValueError(
             f"Could not find requirements.txt at paths {MAP_REPO_TO_REQS_PATHS[repo]} for repo {repo} at commit {commit}"
         )
 
-    lines = reqs.text
     original_req = []
     additional_reqs = []
     req_dir = "/".join(req_path.split("/")[:-1])
@@ -381,18 +424,12 @@ def get_requirements_by_commit(repo: str, commit: str) -> str:
 
     for line in lines.split("\n"):
         if line.strip().startswith("-r"):
-            # Handle recursive requirements
+            # Handle recursive requirements (原来这里 requests.get 连 timeout 都没有,
+            # 被墙时是无限挂起; 现在同样是镜像 + 30s 超时 + 磁盘缓存)
             file_name = line[len("-r") :].strip()
-            reqs_url = os.path.join(
-                SWE_BENCH_URL_RAW,
-                repo,
-                commit,
-                req_dir,
-                file_name,
-            )
-            reqs = requests.get(reqs_url)
-            if reqs.status_code == 200:
-                for line_extra in reqs.text.split("\n"):
+            reqs_text = get_raw_text(repo, commit, os.path.join(req_dir, file_name))
+            if reqs_text is not None:
+                for line_extra in reqs_text.split("\n"):
                     if not exclude_line(line_extra):
                         additional_reqs.append(line_extra)
         else:

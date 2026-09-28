@@ -33,6 +33,7 @@ from swefficiency.harness.constants import (
     INSTANCE_IMAGE_BUILD_DIR,
     MAP_REPO_VERSION_TO_SPECS,
 )
+from swefficiency.harness import image_stream
 from swefficiency.harness.docker_utils import (
     cleanup_container,
     find_dependent_images,
@@ -344,6 +345,44 @@ def get_env_configs_to_build(
     return image_scripts
 
 
+def prepare_local_store(
+    client: docker.DockerClient,
+    dataset: list,
+) -> set[str]:
+    """Move the shared base image in; report which env images can be streamed.
+
+    The harness runs against the scratch store (small, fast, emptied after each
+    run) while ``sweb.base`` and the ``sweb.env`` images live on the durable NFS
+    store.  Streaming them is what keeps this from *building* them -- and
+    building ``sweb.base`` needs ``ubuntu:22.04`` from docker hub, which this box
+    cannot reach (``dial tcp ... i/o timeout``).
+
+    The **env** images are deliberately not moved here: each one is streamed when
+    the first instance that needs it starts (``image_stream.ensure_env_local``,
+    called from ``run_validation.run_instance``) and dropped once its last user
+    finishes.  Moving all 181 up front would hold ~700GB for hours and delay the
+    first instance by the entire transfer.  What this returns is the set of env
+    keys the NFS store can supply, so ``build_env_images`` knows which otherwise
+    "missing" images it must not try to build.
+
+    Same mechanism as the infer side (``ensure_env_in_local_store``): see
+    ``swefficiency/harness/image_stream.py``.  No-op unless
+    ``SWEFFICIENCY_ENV_AUTO_STREAM=1`` + ``SWE_PODMAN_STORE=local``; anything
+    already local, or absent from both stores, is left to the normal build path.
+    """
+    if not image_stream.stream_enabled():
+        return set()
+    test_specs = get_test_specs_from_dataset(dataset)
+    base_keys = {x.base_image_key for x in test_specs}
+    env_keys = {x.env_image_key for x in test_specs}
+    print(
+        f"[image stream] dataset needs {len(base_keys)} base + {len(env_keys)} env "
+        f"images ({len(test_specs)} instances): base moves in now, envs on demand."
+    )
+    image_stream.ensure_images_local(client, base_keys)
+    return image_stream.streamable_keys(env_keys)
+
+
 def build_env_images(
     client: docker.DockerClient,
     dataset: list,
@@ -365,8 +404,29 @@ def build_env_images(
         env_image_keys = {x.env_image_key for x in get_test_specs_from_dataset(dataset)}
         for key in env_image_keys:
             remove_image(client, key, "quiet")
+    # Pull the base image over from the NFS store instead of building it, and
+    # learn which env images the NFS store can hand us on demand.
+    streamable_envs = prepare_local_store(client, dataset)
     build_base_images(client, dataset, force_rebuild)
     configs_to_build = get_env_configs_to_build(client, dataset)
+    if streamable_envs and not force_rebuild:
+        # Those envs are not built here: they are streamed per instance.  A
+        # force_rebuild still wins (the caller explicitly asked for a rebuild).
+        streamable = {
+            image_stream.normalise(image_stream.repo_tag(k)) for k in streamable_envs
+        }
+        streamed_later = [
+            name
+            for name in configs_to_build
+            if image_stream.normalise(image_stream.repo_tag(name)) in streamable
+        ]
+        if streamed_later:
+            print(
+                f"[image stream] {len(streamed_later)} env images left unbuilt — "
+                "each is streamed from the NFS store when its first instance starts."
+            )
+            for name in streamed_later:
+                configs_to_build.pop(name)
     if len(configs_to_build) == 0:
         print("No environment images need to be built.")
         return [], []
@@ -824,6 +884,17 @@ def create_container_from_image(
         if cpu_groups:
             # print(f"Using CPU groups: {cpu_groups}")
             extra_args.update(cpu_groups)
+            # cgroup v2 rootless on this box delegates only `cpu memory pids` to
+            # the user slice, so the container cgroup has no cpuset controller and
+            # crun refuses to start the container:
+            #   controller `cpuset` is not available under .../cgroup.controllers
+            # nano_cpus (a `cpu` quota, and `cpu` IS delegated) still caps each
+            # worker at vcpus_per_worker worth of CPU, which is what keeps
+            # concurrent perf runs comparable; only the hard CPU/NUMA pinning is
+            # dropped -- the same trade-off the infer side makes, since it never
+            # pins CPUs either.
+            for key in ("cpuset_cpus", "cpuset_mems"):
+                extra_args.pop(key, None)
             # print(f"Creating container with args: {extra_args}")
 
         # Create the container
@@ -841,7 +912,10 @@ def create_container_from_image(
             mem_limit="32g",
             mem_reservation="16g",
             memswap_limit="32g",
-            oom_kill_disable=True,  # TODO: Revisit this.
+            # No oom_kill_disable: this box is cgroup v2 and crun rejects it
+            # outright -- `crun: cannot disable OOM killer with cgroupv2: OCI
+            # runtime error`, so the container never starts.  The OOM killer
+            # stays enabled; the container's own mem_limit is the wall.
             oom_score_adj=1000,
             **extra_args,
         )

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from enum import Enum
 from pathlib import Path
 from typing import TypedDict
@@ -1579,7 +1580,9 @@ NON_TEST_EXTS = [
     ".yaml",
     ".toml",
 ]
-SWE_BENCH_URL_RAW = "https://ghfast.top/https://raw.githubusercontent.com/"
+SWE_BENCH_URL_RAW = os.environ.get(
+    "SWE_BENCH_URL_RAW", "https://raw.githubusercontent.com/"
+)
 USE_X86 = {
     "astropy__astropy-7973",
     "django__django-10087",
@@ -3547,6 +3550,11 @@ TEST_NUMPY_DISTRIBUTED = TEST_PYTEST_DISTRIBUTED
 # URL rewrite and fall back to direct github.com.  Kept identical to the plain
 # `git submodule update --init` on the happy path so already-building images are
 # unaffected; only adds resilience for the retry/fallback cases.
+# NOTE: the two `url.https://ghfast.top/...` literals below are load-bearing.
+# make_repo_script_list() rewrites them to the active mirror at build-script
+# generation time (see _LEGACY_MIRROR in test_spec.py), so they must stay
+# spelled exactly as the legacy prefix -- do NOT "clean them up" to the mirror
+# actually in use, or every submodule fetch silently falls back to a dead host.
 _SUBMODULE_INIT_RETRY = """\
 for _sm_i in 1 2 3 4 5; do
   if git submodule update --init; then _sm_ok=yes; echo "Submodules fetched via mirror (attempt ${_sm_i})"; break; fi
@@ -3555,7 +3563,7 @@ for _sm_i in 1 2 3 4 5; do
   sleep 15
 done
 if [ "${_sm_ok}" != yes ]; then
-  echo "ghfast.top submodule fetch failed after 5 attempts; falling back to direct github.com"
+  echo "mirror submodule fetch failed after 5 attempts; falling back to direct github.com"
   git config --global --unset-all url.https://ghfast.top/https://github.com/.insteadOf || true
   for _sm_i in 1 2 3; do
     if git submodule update --init; then _sm_ok=yes; echo "Submodules fetched via direct github (attempt ${_sm_i})"; break; fi
@@ -3565,7 +3573,7 @@ if [ "${_sm_ok}" != yes ]; then
   done
 fi
 if [ "${_sm_ok}" != yes ]; then
-  echo "FATAL: submodules could not be fetched via ghfast.top mirror or direct github.com"
+  echo "FATAL: submodules could not be fetched via the configured mirror or direct github.com"
   exit 1
 fi"""
 
